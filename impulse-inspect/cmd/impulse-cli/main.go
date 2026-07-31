@@ -109,14 +109,16 @@ func runVerify(binPath string) {
 	fmt.Printf("    Size:          %d bytes\n", res.ByteSize)
 	fmt.Printf("    Magic:         0x%X\n", res.Header.Magic)
 	fmt.Printf("    Version:       %d\n", res.Header.Version)
+	fmt.Printf("    DataOffset:    %d bytes\n", res.Header.DataOffset)
 	fmt.Printf("    Domains:       %d\n", res.Header.DomainCount)
 	fmt.Printf("    Relations:     %d\n", res.Header.RelationCount)
 	fmt.Printf("    Kafka Offset:  %d\n", res.Header.KafkaOffset)
+	fmt.Printf("    Global Feats:  %s\n", schema.FormatGlobalFeatures(res.Header.GlobalRequiredFeatures))
 	fmt.Printf("    SHA256 Hash:   %s\n", res.ActualSHA256)
 }
 
 func runDump(inputPath string) {
-	if strings.HasSuffix(inputPath, ".bin") {
+	if strings.HasSuffix(inputPath, ".bin") || strings.HasSuffix(inputPath, ".imps") {
 		runDumpBinary(inputPath)
 		return
 	}
@@ -182,8 +184,10 @@ func runDumpBinary(binPath string) {
 	fmt.Printf("File Size:     %.2f MB (%d bytes)\n", float64(dump.ByteSize)/(1024*1024), dump.ByteSize)
 	fmt.Printf("Magic Bytes:   0x%X (IMPS)\n", dump.Header.Magic)
 	fmt.Printf("Format Ver:    %d\n", dump.Header.Version)
+	fmt.Printf("DataOffset:    %d bytes\n", dump.Header.DataOffset)
 	fmt.Printf("Kafka Offset:  %d\n", dump.Header.KafkaOffset)
 	fmt.Printf("Timestamp:     %d\n", dump.Header.TimestampMs)
+	fmt.Printf("Global Feats:  %s\n", schema.FormatGlobalFeatures(dump.Header.GlobalRequiredFeatures))
 	fmt.Printf("SHA256 Hash:   %s\n", dump.SHA256Hex)
 
 	fmt.Printf("\nRegistered Domains (%d):\n", len(dump.Domains))
@@ -198,6 +202,8 @@ func runDumpBinary(binPath string) {
 			avgDeg = float64(rel.EdgeCount) / float64(rel.NodeCount)
 		}
 		fmt.Printf("  - Matrix [SrcDomainId=%d -> TgtDomainId=%d]:\n", rel.SrcDomainID, rel.TgtDomainID)
+		fmt.Printf("      Encoding Type:       0x%02X\n", rel.EncodingType)
+		fmt.Printf("      Section Features:    %s\n", schema.FormatSectionFeatures(rel.SectionFeatures))
 		fmt.Printf("      Total Nodes (N):    %d\n", rel.NodeCount)
 		fmt.Printf("      Total Edges (E):    %d\n", rel.EdgeCount)
 		fmt.Printf("      Average Degree:     %.2f edges/node\n", avgDeg)

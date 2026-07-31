@@ -154,10 +154,58 @@ public:
         return manifest;
     }
 
+    static std::string format_global_features(uint64_t flags) {
+        std::vector<std::string> names;
+        if (flags & IMPULSE_GLOBAL_FEAT_64BIT_NODES) names.push_back("GLOBAL_FEAT_64BIT_NODES");
+        if (flags & IMPULSE_GLOBAL_FEAT_ZSTD_DICT_EMBEDDED) names.push_back("GLOBAL_FEAT_ZSTD_DICT_EMBEDDED");
+        if (flags & IMPULSE_GLOBAL_FEAT_DELTA_LOG_PRESENT) names.push_back("GLOBAL_FEAT_DELTA_LOG_PRESENT");
+        if (flags & IMPULSE_GLOBAL_FEAT_4KB_PAGE_ALIGNED) names.push_back("GLOBAL_FEAT_4KB_PAGE_ALIGNED");
+        
+        std::ostringstream oss;
+        oss << "0x" << std::hex << std::setw(16) << std::setfill('0') << flags << " [";
+        for (size_t i = 0; i < names.size(); ++i) {
+            if (i > 0) oss << ", ";
+            oss << names[i];
+        }
+        oss << "]";
+        return oss.str();
+    }
+
+    static std::string format_section_features(uint64_t flags) {
+        std::vector<std::string> names;
+        if (flags & IMPULSE_RELATION_FEAT_ENC_RAW_UINT32) names.push_back("RELATION_FEAT_ENC_RAW_UINT32");
+        if (flags & IMPULSE_RELATION_FEAT_ENC_DELTA_VBYTE) names.push_back("RELATION_FEAT_ENC_DELTA_VBYTE");
+        if (flags & IMPULSE_RELATION_FEAT_ENC_RAW_UINT16) names.push_back("RELATION_FEAT_ENC_RAW_UINT16");
+        if (flags & IMPULSE_RELATION_FEAT_ENC_HYBRID_16_32) names.push_back("RELATION_FEAT_ENC_HYBRID_16_32");
+        if (flags & IMPULSE_RELATION_FEAT_ENC_SIMDCOMP) names.push_back("RELATION_FEAT_ENC_SIMDCOMP");
+        if (flags & IMPULSE_RELATION_FEAT_ENC_SLICED_ELLPACK) names.push_back("RELATION_FEAT_ENC_SLICED_ELLPACK");
+        if (flags & IMPULSE_RELATION_FEAT_ENC_TPU_BCOO) names.push_back("RELATION_FEAT_ENC_TPU_BCOO");
+        if (flags & IMPULSE_RELATION_FEAT_ENC_RAW_UINT64) names.push_back("RELATION_FEAT_ENC_RAW_UINT64");
+        if (flags & IMPULSE_RELATION_FEAT_ENC_ROARING_BITMAP) names.push_back("RELATION_FEAT_ENC_ROARING_BITMAP");
+
+        if (flags & IMPULSE_RELATION_FEAT_WEIGHTED_EDGES) names.push_back("RELATION_FEAT_WEIGHTED_EDGES");
+        if (flags & IMPULSE_RELATION_FEAT_KV_LABELS) names.push_back("RELATION_FEAT_KV_LABELS");
+        if (flags & IMPULSE_RELATION_FEAT_DTO_EDGE_ANNOTATIONS) names.push_back("RELATION_FEAT_DTO_EDGE_ANNOTATIONS");
+        if (flags & IMPULSE_RELATION_FEAT_TEMPORAL_TIMESTAMPS) names.push_back("RELATION_FEAT_TEMPORAL_TIMESTAMPS");
+        if (flags & IMPULSE_RELATION_FEAT_PER_SECTION_ZSTD) names.push_back("RELATION_FEAT_PER_SECTION_ZSTD");
+        if (flags & IMPULSE_RELATION_FEAT_INCOMING_CSR_INDEX) names.push_back("RELATION_FEAT_INCOMING_CSR_INDEX");
+
+        std::ostringstream oss;
+        oss << "0x" << std::hex << std::setw(16) << std::setfill('0') << flags << " [";
+        for (size_t i = 0; i < names.size(); ++i) {
+            if (i > 0) oss << ", ";
+            oss << names[i];
+        }
+        oss << "]";
+        return oss.str();
+    }
+
     static bool compile_directory(const std::string& input_dir, const std::string& output_imps_path) {
+        auto t_start_total = std::chrono::high_resolution_clock::now();
+
         std::string manifest_path = (fs::path(input_dir) / "manifest.json").string();
         std::cout << "==========================================================================" << std::endl;
-        std::cout << " IMPULSE-COMPILE: C++20 BINARY SNAPSHOT COMPILER (Spec v2.4.0 4KB Aligned)" << std::endl;
+        std::cout << " IMPULSE-COMPILE: C++20 BINARY SNAPSHOT COMPILER & BENCHMARK SUITE" << std::endl;
         std::cout << "==========================================================================" << std::endl;
         std::cout << " Input Directory:  " << input_dir << std::endl;
         std::cout << " Manifest File:   " << manifest_path << std::endl;
@@ -167,14 +215,24 @@ public:
 
         std::cout << " Found " << manifest.domains.size() << " domains and " 
                   << manifest.relations.size() << " relation manifests." << std::endl;
+        std::cout << " Global Features:  " << format_global_features(manifest.global_features) << std::endl;
 
         std::vector<CompiledRelation> compiled_relations;
+        double total_parse_ms = 0.0;
+        double total_build_ms = 0.0;
+        double total_encode_ms = 0.0;
+        uint64_t grand_total_edges = 0;
+        uint64_t grand_total_raw_bytes = 0;
+        uint64_t grand_total_encoded_bytes = 0;
 
         // Process Relations
         for (const auto& rel_m : manifest.relations) {
             fs::path edge_path = fs::path(input_dir) / rel_m.filename;
-            std::cout << "\n Compiling Relation: " << rel_m.filename << " (File: " << edge_path.string() << ")" << std::endl;
+            std::cout << "\n--------------------------------------------------------------------------" << std::endl;
+            std::cout << " Compiling Relation File: " << rel_m.filename << std::endl;
+            std::cout << "--------------------------------------------------------------------------" << std::endl;
 
+            auto t_parse_0 = std::chrono::high_resolution_clock::now();
             std::ifstream edge_ifs(edge_path);
             if (!edge_ifs.is_open()) {
                 std::cerr << "[!] Error opening edge file: " << edge_path << std::endl;
@@ -209,19 +267,21 @@ public:
                     edges.push_back({src_k, tgt_k, s_id, t_id});
                 }
             }
+            auto t_parse_1 = std::chrono::high_resolution_clock::now();
+            double parse_ms = std::chrono::duration<double, std::milli>(t_parse_1 - t_parse_0).count();
+            total_parse_ms += parse_ms;
 
             uint64_t node_count = src_key_map.size();
             uint64_t edge_count = edges.size();
+            grand_total_edges += edge_count;
 
-            std::cout << "   - Nodes: " << node_count << " | Edges: " << edge_count << std::endl;
-
-            // Sort edges by src_id, then tgt_id
+            // Build RowOffsets & CSR
+            auto t_build_0 = std::chrono::high_resolution_clock::now();
             std::sort(edges.begin(), edges.end(), [](const RawEdge& a, const RawEdge& b) {
                 if (a.src_id != b.src_id) return a.src_id < b.src_id;
                 return a.tgt_id < b.tgt_id;
             });
 
-            // Build RowOffsets
             std::vector<uint32_t> row_offsets(node_count + 2, 0);
             std::vector<uint32_t> col_indices;
             col_indices.reserve(edge_count);
@@ -241,8 +301,12 @@ public:
                 row_offsets[curr_node + 1] = curr_off;
                 curr_node++;
             }
+            auto t_build_1 = std::chrono::high_resolution_clock::now();
+            double build_ms = std::chrono::duration<double, std::milli>(t_build_1 - t_build_0).count();
+            total_build_ms += build_ms;
 
             // Encode ColumnIndices stream
+            auto t_encode_0 = std::chrono::high_resolution_clock::now();
             std::vector<uint8_t> encoded_cols;
             if (rel_m.encoding == IMPULSE_ENC_DELTA_VBYTE) {
                 for (size_t node = 0; node <= node_count; ++node) {
@@ -260,6 +324,26 @@ public:
                 const uint8_t* ptr = reinterpret_cast<const uint8_t*>(col_indices.data());
                 encoded_cols.assign(ptr, ptr + col_indices.size() * sizeof(uint32_t));
             }
+            auto t_encode_1 = std::chrono::high_resolution_clock::now();
+            double encode_ms = std::chrono::duration<double, std::milli>(t_encode_1 - t_encode_0).count();
+            total_encode_ms += encode_ms;
+
+            uint64_t raw_csr_bytes = (node_count + 2) * 4 + edge_count * 4;
+            uint64_t comp_csr_bytes = (node_count + 2) * 4 + encoded_cols.size();
+            grand_total_raw_bytes += raw_csr_bytes;
+            grand_total_encoded_bytes += comp_csr_bytes;
+
+            double ratio = (double)raw_csr_bytes / (double)comp_csr_bytes;
+            double savings = (1.0 - (double)comp_csr_bytes / (double)raw_csr_bytes) * 100.0;
+
+            uint64_t sec_flags = rel_m.section_features | (1ULL << rel_m.encoding);
+
+            std::cout << "   - Graph Topology:     " << node_count << " nodes, " << edge_count << " edges" << std::endl;
+            std::cout << "   - Section Features:   " << format_section_features(sec_flags) << std::endl;
+            std::cout << "   - Raw uint32 CSR Size:" << std::fixed << std::setprecision(2) << (raw_csr_bytes / 1024.0 / 1024.0) << " MB" << std::endl;
+            std::cout << "   - Encoded CSR Size:   " << (comp_csr_bytes / 1024.0 / 1024.0) << " MB" << std::endl;
+            std::cout << "   - Compression Ratio:  " << ratio << "x (" << savings << "% space savings)" << std::endl;
+            std::cout << "   - Relation Timings:   Parse: " << parse_ms << " ms | Build CSR: " << build_ms << " ms | Encode: " << encode_ms << " ms" << std::endl;
 
             CompiledRelation crel;
             crel.src_domain_id = rel_m.src_domain;
@@ -267,13 +351,15 @@ public:
             crel.encoding_type = rel_m.encoding;
             crel.node_count = node_count;
             crel.edge_count = edge_count;
-            crel.section_features = rel_m.section_features | (1ULL << rel_m.encoding);
+            crel.section_features = sec_flags;
             crel.row_offsets = std::move(row_offsets);
             crel.column_indices = std::move(col_indices);
             crel.encoded_col_indices = std::move(encoded_cols);
 
             compiled_relations.push_back(std::move(crel));
         }
+
+        auto t_ser_0 = std::chrono::high_resolution_clock::now();
 
         // Build Payload (Section 2 Domain Catalog + Directory Table + Section 3 Arrays)
         std::vector<uint8_t> payload;
@@ -295,13 +381,12 @@ public:
         size_t directory_start_offset = payload.size();
         std::vector<impulse_relation_directory_entry_t> dir_table(compiled_relations.size());
 
-        // Reserve space for directory entries in payload
         size_t dir_bytes = compiled_relations.size() * sizeof(impulse_relation_directory_entry_t);
         payload.insert(payload.end(), dir_bytes, 0x00);
         align64(payload);
 
         // Append CSR Arrays & Fill Pointers
-        uint64_t base_file_offset = 4096; // DataOffset = 4096
+        uint64_t base_file_offset = 4096;
 
         for (size_t i = 0; i < compiled_relations.size(); ++i) {
             const auto& crel = compiled_relations[i];
@@ -337,9 +422,7 @@ public:
             entry.delta_log_bytes = 0;
         }
 
-        // Copy populated directory entries back into payload
         std::memcpy(payload.data() + directory_start_offset, dir_table.data(), dir_bytes);
-
         align4096(payload);
 
         // Compute SHA-256 Payload Digest
@@ -370,8 +453,31 @@ public:
         ofs.write(reinterpret_cast<const char*>(payload.data()), payload.size());
         ofs.close();
 
-        std::cout << "\n [✓] Successfully compiled .imps binary snapshot!" << std::endl;
-        std::cout << "     File: " << output_imps_path << " (" << (sizeof(header) + payload.size()) << " total bytes)" << std::endl;
+        auto t_ser_1 = std::chrono::high_resolution_clock::now();
+        double ser_ms = std::chrono::duration<double, std::milli>(t_ser_1 - t_ser_0).count();
+
+        auto t_end_total = std::chrono::high_resolution_clock::now();
+        double total_ms = std::chrono::duration<double, std::milli>(t_end_total - t_start_total).count();
+
+        uint64_t final_snapshot_bytes = sizeof(header) + payload.size();
+        double total_m_edges_sec = (grand_total_edges / 1000000.0) / (total_ms / 1000.0);
+        double total_mb_sec = (final_snapshot_bytes / 1024.0 / 1024.0) / (total_ms / 1000.0);
+        double overall_ratio = (double)grand_total_raw_bytes / (double)grand_total_encoded_bytes;
+        double overall_savings = (1.0 - (double)grand_total_encoded_bytes / (double)grand_total_raw_bytes) * 100.0;
+
+        std::cout << "\n==========================================================================" << std::endl;
+        std::cout << " COMPILATION & BENCHMARK PERFORMANCE REPORT" << std::endl;
+        std::cout << "==========================================================================" << std::endl;
+        std::cout << " Total Compiled File Size:   " << (final_snapshot_bytes / 1024.0 / 1024.0) << " MB (" << final_snapshot_bytes << " bytes)" << std::endl;
+        std::cout << " Total Edges Processed:      " << grand_total_edges << " edges" << std::endl;
+        std::cout << " Overall Compression Ratio:  " << std::fixed << std::setprecision(2) << overall_ratio << "x (" << overall_savings << "% space savings)" << std::endl;
+        std::cout << " Compilation Throughput:     " << total_m_edges_sec << " M_edges/sec (" << total_mb_sec << " MB/sec)" << std::endl;
+        std::cout << " Timing Breakdown:           " << std::endl;
+        std::cout << "   - Parse & Key Resolution: " << total_parse_ms << " ms" << std::endl;
+        std::cout << "   - CSR Index Building:     " << total_build_ms << " ms" << std::endl;
+        std::cout << "   - Stream Encoding:        " << total_encode_ms << " ms" << std::endl;
+        std::cout << "   - 4KB Disk Serialization: " << ser_ms << " ms" << std::endl;
+        std::cout << "   - Total Execution Time:   " << total_ms << " ms" << std::endl;
         std::cout << "==========================================================================" << std::endl;
 
         return true;

@@ -58,7 +58,9 @@ node_modules/
 dist/
 site/
 
-# Binary test outputs
+# Binary test outputs & downloaded datasets
 *.bin
 *.imps
 impulse-compile/impulse-compile
+impulse-inspect/impulse-inspect
+datasets/

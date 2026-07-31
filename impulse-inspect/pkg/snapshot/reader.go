@@ -28,12 +28,14 @@ type BinaryDomainInfo struct {
 }
 
 type BinaryRelationInfo struct {
-	SrcDomainID uint16
-	TgtDomainID uint16
-	NodeCount   uint32
-	EdgeCount   uint64
-	RowOffsets  []uint32
-	SampleEdges []uint32
+	SrcDomainID     uint16
+	TgtDomainID     uint16
+	EncodingType    uint8
+	SectionFeatures uint64
+	NodeCount       uint32
+	EdgeCount       uint64
+	RowOffsets      []uint32
+	SampleEdges     []uint32
 }
 
 type BinarySnapshotDump struct {
@@ -172,23 +174,36 @@ func ReadAndDumpSnapshotBinary(filePath string) (*BinarySnapshotDump, error) {
 
 		srcDomID := binary.LittleEndian.Uint16(data[offset : offset+2])
 		tgtDomID := binary.LittleEndian.Uint16(data[offset+2 : offset+4])
+		var encType uint8 = 0
+		var secFeatures uint64 = 0
 
 		relOffset := offset + 4
 		if hdr.Version >= 2 {
+			encType = data[relOffset]
 			relOffset++ // skip EncodingType byte
 		}
 
 		nodeCount := binary.LittleEndian.Uint32(data[relOffset : relOffset+4])
 		edgeCount := binary.LittleEndian.Uint64(data[relOffset+4 : relOffset+12])
+
 		rowOffBytes := binary.LittleEndian.Uint64(data[relOffset+12 : relOffset+20])
 		colIdxBytes := binary.LittleEndian.Uint64(data[relOffset+20 : relOffset+28])
+
+		if hdr.DataOffset >= 4096 && relOffset+20 <= len(data) {
+			secFeatures = binary.LittleEndian.Uint64(data[relOffset+12 : relOffset+20])
+			rowOffBytes = binary.LittleEndian.Uint64(data[relOffset+28 : relOffset+36])
+			colIdxBytes = binary.LittleEndian.Uint64(data[relOffset+44 : relOffset+52])
+		}
+
 		offset += headerSize
 
 		relInfo := BinaryRelationInfo{
-			SrcDomainID: srcDomID,
-			TgtDomainID: tgtDomID,
-			NodeCount:   nodeCount,
-			EdgeCount:   edgeCount,
+			SrcDomainID:     srcDomID,
+			TgtDomainID:     tgtDomID,
+			EncodingType:    encType,
+			SectionFeatures: secFeatures,
+			NodeCount:       nodeCount,
+			EdgeCount:       edgeCount,
 		}
 
 		// Read sample rowOffsets

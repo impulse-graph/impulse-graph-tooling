@@ -62,16 +62,17 @@ func (k KeyType) String() string {
 	}
 }
 
-// C-ABI Extensible Header (64 Bytes)
+// C-ABI Extensible Header (4KB Page Aligned in v2.4)
 type SnapshotHeader struct {
-	Magic         uint32
-	Version       uint16
-	DataOffset    uint32
-	DomainCount   uint16
-	RelationCount uint16
-	KafkaOffset   uint64
-	TimestampMs   uint64
-	SHA256        [32]byte
+	Magic                  uint32
+	Version                uint16
+	DataOffset             uint32
+	DomainCount            uint16
+	RelationCount          uint16
+	KafkaOffset            uint64
+	TimestampMs            uint64
+	SHA256                 [32]byte
+	GlobalRequiredFeatures uint64
 }
 
 func (h *SnapshotHeader) Serialize(buf []byte) {
@@ -85,6 +86,9 @@ func (h *SnapshotHeader) Serialize(buf []byte) {
 	copy(buf[30:62], h.SHA256[:])
 	buf[62] = 0
 	buf[63] = 0
+	if len(buf) >= 72 {
+		binary.LittleEndian.PutUint64(buf[64:72], h.GlobalRequiredFeatures)
+	}
 }
 
 func DeserializeHeader(buf []byte) SnapshotHeader {
@@ -99,6 +103,10 @@ func DeserializeHeader(buf []byte) SnapshotHeader {
 		h.KafkaOffset = binary.LittleEndian.Uint64(buf[14:22])
 		h.TimestampMs = binary.LittleEndian.Uint64(buf[22:30])
 		copy(h.SHA256[:], buf[30:62])
+
+		if len(buf) >= 72 {
+			h.GlobalRequiredFeatures = binary.LittleEndian.Uint64(buf[64:72])
+		}
 	} else {
 		h.DataOffset = 58
 		h.DomainCount = binary.LittleEndian.Uint16(buf[6:8])
@@ -108,4 +116,82 @@ func DeserializeHeader(buf []byte) SnapshotHeader {
 		copy(h.SHA256[:], buf[26:58])
 	}
 	return h
+}
+
+func FormatGlobalFeatures(flags uint64) string {
+	names := []string{}
+	if flags&(1<<0) != 0 {
+		names = append(names, "GLOBAL_FEAT_64BIT_NODES")
+	}
+	if flags&(1<<1) != 0 {
+		names = append(names, "GLOBAL_FEAT_ZSTD_DICT_EMBEDDED")
+	}
+	if flags&(1<<2) != 0 {
+		names = append(names, "GLOBAL_FEAT_DELTA_LOG_PRESENT")
+	}
+	if flags&(1<<3) != 0 {
+		names = append(names, "GLOBAL_FEAT_4KB_PAGE_ALIGNED")
+	}
+	return formatFlags(flags, names)
+}
+
+func FormatSectionFeatures(flags uint64) string {
+	names := []string{}
+	if flags&(1<<0) != 0 {
+		names = append(names, "RELATION_FEAT_ENC_RAW_UINT32")
+	}
+	if flags&(1<<1) != 0 {
+		names = append(names, "RELATION_FEAT_ENC_DELTA_VBYTE")
+	}
+	if flags&(1<<2) != 0 {
+		names = append(names, "RELATION_FEAT_ENC_RAW_UINT16")
+	}
+	if flags&(1<<3) != 0 {
+		names = append(names, "RELATION_FEAT_ENC_HYBRID_16_32")
+	}
+	if flags&(1<<4) != 0 {
+		names = append(names, "RELATION_FEAT_ENC_SIMDCOMP")
+	}
+	if flags&(1<<5) != 0 {
+		names = append(names, "RELATION_FEAT_ENC_SLICED_ELLPACK")
+	}
+	if flags&(1<<6) != 0 {
+		names = append(names, "RELATION_FEAT_ENC_TPU_BCOO")
+	}
+	if flags&(1<<7) != 0 {
+		names = append(names, "RELATION_FEAT_ENC_RAW_UINT64")
+	}
+	if flags&(1<<8) != 0 {
+		names = append(names, "RELATION_FEAT_ENC_ROARING_BITMAP")
+	}
+	if flags&(1<<16) != 0 {
+		names = append(names, "RELATION_FEAT_WEIGHTED_EDGES")
+	}
+	if flags&(1<<17) != 0 {
+		names = append(names, "RELATION_FEAT_KV_LABELS")
+	}
+	if flags&(1<<18) != 0 {
+		names = append(names, "RELATION_FEAT_DTO_EDGE_ANNOTATIONS")
+	}
+	if flags&(1<<19) != 0 {
+		names = append(names, "RELATION_FEAT_TEMPORAL_TIMESTAMPS")
+	}
+	if flags&(1<<20) != 0 {
+		names = append(names, "RELATION_FEAT_PER_SECTION_ZSTD")
+	}
+	if flags&(1<<21) != 0 {
+		names = append(names, "RELATION_FEAT_INCOMING_CSR_INDEX")
+	}
+	return formatFlags(flags, names)
+}
+
+func formatFlags(flags uint64, names []string) string {
+	strNames := ""
+	for i, n := range names {
+		if i > 0 {
+			strNames += ", "
+		}
+		strNames += n
+	}
+	return fmt.Sprintf("0x%016X [%s]", flags, strNames)
 }
