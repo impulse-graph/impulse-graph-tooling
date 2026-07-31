@@ -83,6 +83,98 @@ public:
         }
     }
 
+    static void write_bitpacked_block(std::vector<uint8_t>& buf, const uint32_t* values, size_t count, uint8_t bit_width) {
+        buf.push_back(bit_width);
+        uint64_t bit_buffer = 0;
+        int bits_in_buffer = 0;
+
+        for (size_t i = 0; i < count; ++i) {
+            bit_buffer |= (static_cast<uint64_t>(values[i]) << bits_in_buffer);
+            bits_in_buffer += bit_width;
+
+            while (bits_in_buffer >= 8) {
+                buf.push_back(static_cast<uint8_t>(bit_buffer & 0xFF));
+                bit_buffer >>= 8;
+                bits_in_buffer -= 8;
+            }
+        }
+        if (bits_in_buffer > 0) {
+            buf.push_back(static_cast<uint8_t>(bit_buffer & 0xFF));
+        }
+    }
+
+    static void encode_simdcomp(std::vector<uint8_t>& buf, const std::vector<uint32_t>& row_offsets, const std::vector<uint32_t>& col_indices, uint64_t node_count) {
+        std::vector<uint32_t> deltas;
+        deltas.reserve(col_indices.size());
+
+        for (size_t node = 0; node <= node_count; ++node) {
+            uint32_t start = row_offsets[node];
+            uint32_t end = row_offsets[node + 1];
+            uint32_t prev_tgt = 0;
+            for (uint32_t idx = start; idx < end; ++idx) {
+                uint32_t tgt = col_indices[idx];
+                uint32_t delta = (idx == start) ? tgt : (tgt - prev_tgt);
+                deltas.push_back(delta);
+                prev_tgt = tgt;
+            }
+        }
+
+        // Pack 128-integer SIMDComp blocks
+        size_t pos = 0;
+        while (pos < deltas.size()) {
+            size_t block_size = std::min<size_t>(128, deltas.size() - pos);
+            uint32_t max_val = 0;
+            for (size_t i = 0; i < block_size; ++i) {
+                if (deltas[pos + i] > max_val) max_val = deltas[pos + i];
+            }
+
+            uint8_t bit_width = 0;
+            while ((1ULL << bit_width) <= max_val && bit_width < 32) {
+                bit_width++;
+            }
+
+            write_bitpacked_block(buf, &deltas[pos], block_size, bit_width);
+            pos += block_size;
+        }
+    }
+
+    static void encode_sliced_ellpack(std::vector<uint8_t>& buf, const std::vector<uint32_t>& row_offsets, const std::vector<uint32_t>& col_indices, uint64_t node_count) {
+        // Sliced ELLPACK GPU format: 32-row slice warp width
+        const size_t SLICE_SIZE = 32;
+        size_t num_slices = (node_count + 1 + SLICE_SIZE - 1) / SLICE_SIZE;
+
+        for (size_t slice = 0; slice < num_slices; ++slice) {
+            size_t start_row = slice * SLICE_SIZE;
+            size_t end_row = std::min<size_t>(start_row + SLICE_SIZE, node_count + 1);
+
+            uint32_t max_deg = 0;
+            for (size_t r = start_row; r < end_row; ++r) {
+                uint32_t deg = row_offsets[r + 1] - row_offsets[r];
+                if (deg > max_deg) max_deg = deg;
+            }
+
+            // Write 32-bit slice header (max_deg)
+            const uint8_t* deg_ptr = reinterpret_cast<const uint8_t*>(&max_deg);
+            buf.insert(buf.end(), deg_ptr, deg_ptr + 4);
+
+            // Write column-major warp coalesced array
+            for (uint32_t col = 0; col < max_deg; ++col) {
+                for (size_t r = start_row; r < start_row + SLICE_SIZE; ++r) {
+                    uint32_t val = 0xFFFFFFFF; // Padding marker
+                    if (r < end_row) {
+                        uint32_t r_start = row_offsets[r];
+                        uint32_t r_deg = row_offsets[r + 1] - r_start;
+                        if (col < r_deg) {
+                            val = col_indices[r_start + col];
+                        }
+                    }
+                    const uint8_t* val_ptr = reinterpret_cast<const uint8_t*>(&val);
+                    buf.insert(buf.end(), val_ptr, val_ptr + 4);
+                }
+            }
+        }
+    }
+
     static CompilerManifest parse_simple_manifest(const std::string& manifest_path) {
         CompilerManifest manifest;
         std::ifstream ifs(manifest_path);
@@ -92,12 +184,6 @@ public:
 
         std::string content((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
         
-        // Lightweight parsing fallback for manifest.json
-        // Domains
-        size_t pos = 0;
-        uint16_t next_domain_id = 0;
-
-        // Simple line parser if text/json
         std::istringstream iss(content);
         std::string line;
         bool in_domains = false;
@@ -109,7 +195,7 @@ public:
 
             if (in_domains && line.find("\"name\"") != std::string::npos) {
                 DomainManifest dom;
-                dom.id = next_domain_id++;
+                dom.id = manifest.domains.size();
                 size_t q1 = line.find('"', line.find("\"name\"") + 6);
                 size_t q2 = line.find('"', q1 + 1);
                 if (q1 != std::string::npos && q2 != std::string::npos) {
@@ -125,8 +211,22 @@ public:
                 RelationManifest rel;
                 rel.src_domain = 0;
                 rel.tgt_domain = manifest.domains.size() > 1 ? 1 : 0;
-                rel.encoding = IMPULSE_ENC_DELTA_VBYTE;
-                rel.section_features = IMPULSE_RELATION_FEAT_ENC_DELTA_VBYTE;
+                rel.encoding = IMPULSE_ENC_RAW_UINT32;
+                rel.section_features = IMPULSE_RELATION_FEAT_ENC_RAW_UINT32;
+
+                if (content.find("\"encoding\": \"simdcomp\"") != std::string::npos || content.find("\"simdcomp\"") != std::string::npos) {
+                    rel.encoding = IMPULSE_ENC_SIMDCOMP;
+                    rel.section_features = IMPULSE_RELATION_FEAT_ENC_SIMDCOMP;
+                } else if (content.find("\"encoding\": \"sliced_ellpack\"") != std::string::npos || content.find("\"sliced_ellpack\"") != std::string::npos || content.find("\"ellpack\"") != std::string::npos) {
+                    rel.encoding = IMPULSE_ENC_SLICED_ELLPACK;
+                    rel.section_features = IMPULSE_RELATION_FEAT_ENC_SLICED_ELLPACK;
+                } else if (content.find("\"encoding\": \"delta_vbyte\"") != std::string::npos || content.find("\"delta_vbyte\"") != std::string::npos) {
+                    rel.encoding = IMPULSE_ENC_DELTA_VBYTE;
+                    rel.section_features = IMPULSE_RELATION_FEAT_ENC_DELTA_VBYTE;
+                } else if (content.find("\"encoding\": \"raw_uint32\"") != std::string::npos || content.find("\"raw_uint32\"") != std::string::npos) {
+                    rel.encoding = IMPULSE_ENC_RAW_UINT32;
+                    rel.section_features = IMPULSE_RELATION_FEAT_ENC_RAW_UINT32;
+                }
 
                 size_t q1 = line.find('"', line.find("\"file\"") + 6);
                 size_t q2 = line.find('"', q1 + 1);
@@ -320,6 +420,10 @@ public:
                         prev_tgt = tgt;
                     }
                 }
+            } else if (rel_m.encoding == IMPULSE_ENC_SIMDCOMP) {
+                encode_simdcomp(encoded_cols, row_offsets, col_indices, node_count);
+            } else if (rel_m.encoding == IMPULSE_ENC_SLICED_ELLPACK) {
+                encode_sliced_ellpack(encoded_cols, row_offsets, col_indices, node_count);
             } else {
                 const uint8_t* ptr = reinterpret_cast<const uint8_t*>(col_indices.data());
                 encoded_cols.assign(ptr, ptr + col_indices.size() * sizeof(uint32_t));
