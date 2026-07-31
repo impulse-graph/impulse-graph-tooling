@@ -1,5 +1,7 @@
+#include "impulse_graph.h"
 #include <iostream>
 #include <fstream>
+#include <sstream>
 #include <vector>
 #include <string>
 #include <chrono>
@@ -10,56 +12,24 @@
 #include <numeric>
 #include <CommonCrypto/CommonDigest.h>
 
-#pragma pack(push, 1)
-struct SnapshotHeader {
-    uint32_t magic;         // 0x494D5053 ("IMPS")
-    uint16_t version;       // Format Version (2)
-    uint32_t data_offset;   // Offset in bytes from file start to payload data (64)
-    uint16_t domain_count;  // Domain count
-    uint16_t relation_count;// Relation count
-    uint64_t kafka_offset;  // Kafka WAL offset
-    uint64_t timestamp_ms;  // Snapshot timestamp (ms)
-    uint8_t sha256[32];     // 32-byte SHA256 payload digest
-    uint8_t reserved[2];    // Reserved header padding (Header size = 64 bytes)
-};
-#pragma pack(pop)
-
-enum RelationEncoding : uint8_t {
-    ENCODING_RAW_UINT32             = 0x00,
-    ENCODING_DELTA_VBYTE            = 0x01,
-    ENCODING_RAW_UINT16             = 0x02,
-    ENCODING_HYBRID_UINT16_UINT32   = 0x03,
-    ENCODING_SIMDCOMP_BITPACKED     = 0x04
-};
-
-struct BusinessKeyMap {
-    uint32_t dense_id;
-    std::string business_key;
-};
-
-struct DomainData {
-    uint16_t domain_id;
-    uint8_t key_type;
-    std::string name;
-    std::vector<BusinessKeyMap> mappings;
-};
-
-struct RelationData {
-    uint16_t src_domain_id;
-    uint16_t tgt_domain_id;
-    uint8_t encoding_type; // 0x00 = Raw uint32, 0x01 = Delta-VByte, 0x02 = Raw uint16, 0x03 = Hybrid
-    uint32_t node_count;
-    uint64_t edge_count;
-    std::vector<uint32_t> row_offsets;
-    std::vector<uint32_t> column_indices;
-};
-
 static std::string bytes_to_hex(const uint8_t* bytes, size_t len) {
     std::ostringstream oss;
     for (size_t i = 0; i < len; ++i) {
         oss << std::hex << std::setw(2) << std::setfill('0') << (int)bytes[i];
     }
     return oss.str();
+}
+
+static uint64_t read_vbyte(const uint8_t* buf, size_t& offset, size_t max_len) {
+    uint64_t val = 0;
+    int shift = 0;
+    while (offset < max_len) {
+        uint8_t b = buf[offset++];
+        val |= (static_cast<uint64_t>(b & 0x7F) << shift);
+        if ((b & 0x80) == 0) break;
+        shift += 7;
+    }
+    return val;
 }
 
 static void write_vbyte(std::vector<uint8_t>& buf, uint64_t val) {
@@ -70,425 +40,492 @@ static void write_vbyte(std::vector<uint8_t>& buf, uint64_t val) {
     buf.push_back(static_cast<uint8_t>(val & 0x7F));
 }
 
-static void pad64(std::vector<uint8_t>& buf) {
+static void write_bitpacked_block(std::vector<uint8_t>& buf, const uint32_t* values, size_t count, uint8_t bit_width) {
+    buf.push_back(bit_width);
+    uint64_t bit_buffer = 0;
+    int bits_in_buffer = 0;
+
+    for (size_t i = 0; i < count; ++i) {
+        bit_buffer |= (static_cast<uint64_t>(values[i]) << bits_in_buffer);
+        bits_in_buffer += bit_width;
+
+        while (bits_in_buffer >= 8) {
+            buf.push_back(static_cast<uint8_t>(bit_buffer & 0xFF));
+            bit_buffer >>= 8;
+            bits_in_buffer -= 8;
+        }
+    }
+    if (bits_in_buffer > 0) {
+        buf.push_back(static_cast<uint8_t>(bit_buffer & 0xFF));
+    }
+}
+
+static void encode_simdcomp(std::vector<uint8_t>& buf, const std::vector<uint32_t>& row_offsets, const std::vector<uint32_t>& col_indices, uint64_t node_count) {
+    std::vector<uint32_t> deltas;
+    deltas.reserve(col_indices.size());
+
+    for (size_t node = 0; node <= node_count; ++node) {
+        uint32_t start = row_offsets[node];
+        uint32_t end = row_offsets[node + 1];
+        uint32_t prev_tgt = 0;
+        for (uint32_t idx = start; idx < end; ++idx) {
+            uint32_t tgt = col_indices[idx];
+            uint32_t delta = (idx == start) ? tgt : (tgt - prev_tgt);
+            deltas.push_back(delta);
+            prev_tgt = tgt;
+        }
+    }
+
+    size_t pos = 0;
+    while (pos < deltas.size()) {
+        size_t block_size = std::min<size_t>(128, deltas.size() - pos);
+        uint32_t max_val = 0;
+        for (size_t i = 0; i < block_size; ++i) {
+            if (deltas[pos + i] > max_val) max_val = deltas[pos + i];
+        }
+
+        uint8_t bit_width = 0;
+        while ((1ULL << bit_width) <= max_val && bit_width < 32) {
+            bit_width++;
+        }
+
+        write_bitpacked_block(buf, &deltas[pos], block_size, bit_width);
+        pos += block_size;
+    }
+}
+
+static void decode_simdcomp(const uint8_t* buf, size_t buf_len, uint64_t edge_count, std::vector<uint32_t>& out_deltas) {
+    out_deltas.clear();
+    out_deltas.reserve(edge_count);
+
+    size_t pos = 0;
+    while (pos < buf_len && out_deltas.size() < edge_count) {
+        uint8_t bit_width = buf[pos++];
+        size_t block_size = std::min<size_t>(128, edge_count - out_deltas.size());
+
+        uint64_t bit_buffer = 0;
+        int bits_in_buffer = 0;
+
+        for (size_t i = 0; i < block_size; ++i) {
+            while (bits_in_buffer < bit_width && pos < buf_len) {
+                bit_buffer |= (static_cast<uint64_t>(buf[pos++]) << bits_in_buffer);
+                bits_in_buffer += 8;
+            }
+            uint32_t val = bit_buffer & ((1ULL << bit_width) - 1);
+            bit_buffer >>= bit_width;
+            bits_in_buffer -= bit_width;
+            out_deltas.push_back(val);
+        }
+    }
+}
+
+static void encode_sliced_ellpack(std::vector<uint8_t>& buf, const std::vector<uint32_t>& row_offsets, const std::vector<uint32_t>& col_indices, uint64_t node_count) {
+    const size_t SLICE_SIZE = 32;
+    size_t num_slices = (node_count + 1 + SLICE_SIZE - 1) / SLICE_SIZE;
+
+    for (size_t slice = 0; slice < num_slices; ++slice) {
+        size_t start_row = slice * SLICE_SIZE;
+        size_t end_row = std::min<size_t>(start_row + SLICE_SIZE, node_count + 1);
+
+        uint32_t max_deg = 0;
+        for (size_t r = start_row; r < end_row; ++r) {
+            uint32_t deg = row_offsets[r + 1] - row_offsets[r];
+            if (deg > max_deg) max_deg = deg;
+        }
+
+        const uint8_t* deg_ptr = reinterpret_cast<const uint8_t*>(&max_deg);
+        buf.insert(buf.end(), deg_ptr, deg_ptr + 4);
+
+        for (uint32_t col = 0; col < max_deg; ++col) {
+            for (size_t r = start_row; r < start_row + SLICE_SIZE; ++r) {
+                uint32_t val = 0xFFFFFFFF;
+                if (r < end_row) {
+                    uint32_t r_start = row_offsets[r];
+                    uint32_t r_deg = row_offsets[r + 1] - r_start;
+                    if (col < r_deg) {
+                        val = col_indices[r_start + col];
+                    }
+                }
+                const uint8_t* val_ptr = reinterpret_cast<const uint8_t*>(&val);
+                buf.insert(buf.end(), val_ptr, val_ptr + 4);
+            }
+        }
+    }
+}
+
+static void decode_sliced_ellpack(const uint8_t* buf, size_t buf_len, const std::vector<uint32_t>& row_offsets, uint64_t node_count, std::vector<uint32_t>& out_col_indices) {
+    const size_t SLICE_SIZE = 32;
+    size_t num_slices = (node_count + 1 + SLICE_SIZE - 1) / SLICE_SIZE;
+    out_col_indices.clear();
+
+    size_t offset = 0;
+    for (size_t slice = 0; slice < num_slices; ++slice) {
+        if (offset + 4 > buf_len) break;
+        uint32_t max_deg = *reinterpret_cast<const uint32_t*>(buf + offset);
+        offset += 4;
+
+        size_t start_row = slice * SLICE_SIZE;
+        size_t end_row = std::min<size_t>(start_row + SLICE_SIZE, node_count + 1);
+
+        std::vector<std::vector<uint32_t>> row_neighbors(end_row - start_row);
+
+        for (uint32_t col = 0; col < max_deg; ++col) {
+            for (size_t r_idx = 0; r_idx < SLICE_SIZE; ++r_idx) {
+                if (offset + 4 > buf_len) break;
+                uint32_t val = *reinterpret_cast<const uint32_t*>(buf + offset);
+                offset += 4;
+                size_t row_i = start_row + r_idx;
+                if (row_i < end_row && val != 0xFFFFFFFF) {
+                    row_neighbors[r_idx].push_back(val);
+                }
+            }
+        }
+
+        for (size_t r_idx = 0; r_idx < row_neighbors.size(); ++r_idx) {
+            out_col_indices.insert(out_col_indices.end(), row_neighbors[r_idx].begin(), row_neighbors[r_idx].end());
+        }
+    }
+}
+
+static void align64(std::vector<uint8_t>& buf) {
     size_t rem = buf.size() % 64;
     if (rem != 0) {
         buf.insert(buf.end(), 64 - rem, 0x00);
     }
 }
 
+static void align4096(std::vector<uint8_t>& buf) {
+    size_t rem = buf.size() % 4096;
+    if (rem != 0) {
+        buf.insert(buf.end(), 4096 - rem, 0x00);
+    }
+}
+
+struct DomainData {
+    uint16_t domain_id;
+    uint8_t key_type;
+    std::string name;
+    std::vector<uint8_t> raw_payload;
+};
+
+struct RelationData {
+    uint16_t src_domain_id;
+    uint16_t tgt_domain_id;
+    uint8_t encoding_type;
+    uint64_t node_count;
+    uint64_t edge_count;
+    uint64_t section_features;
+    std::vector<uint32_t> row_offsets;
+    std::vector<uint32_t> column_indices;
+};
+
 int main(int argc, char* argv[]) {
     if (argc < 3) {
-        std::cout << "Usage: " << argv[0] << " <input_snapshot.bin> <output_optimized.bin> [--vbyte] [--uint16] [--hybrid] [--optimize]" << std::endl;
+        std::cout << "Usage: " << argv[0] << " <input_snapshot.imps> <output_snapshot.imps> [--to-encoding raw_uint32|delta_vbyte|simdcomp|sliced_ellpack|raw_uint16] [--rcm-reorder]" << std::endl;
+        std::cout << "   or: " << argv[0] << " input.imps output.imps [--simdcomp|--ellpack|--vbyte|--raw|--optimize]" << std::endl;
         return 1;
     }
 
     std::string input_path = argv[1];
     std::string output_path = argv[2];
 
-    bool enable_vbyte = false;
-    bool enable_uint16 = false;
-    bool enable_hybrid = false;
-    bool enable_optimize = false;
+    uint8_t target_encoding = IMPULSE_ENC_SIMDCOMP; // Default target
+    bool override_target_encoding = false;
+    bool enable_rcm_reorder = false;
 
     for (int i = 3; i < argc; ++i) {
         std::string arg = argv[i];
-        if (arg == "--vbyte") enable_vbyte = true;
-        if (arg == "--uint16") enable_uint16 = true;
-        if (arg == "--hybrid") enable_hybrid = true;
-        if (arg == "--optimize") enable_optimize = true;
+        if (arg == "--to-encoding" && i + 1 < argc) {
+            std::string enc = argv[++i];
+            override_target_encoding = true;
+            if (enc == "simdcomp") target_encoding = IMPULSE_ENC_SIMDCOMP;
+            else if (enc == "sliced_ellpack" || enc == "ellpack") target_encoding = IMPULSE_ENC_SLICED_ELLPACK;
+            else if (enc == "delta_vbyte" || enc == "vbyte") target_encoding = IMPULSE_ENC_DELTA_VBYTE;
+            else if (enc == "raw_uint32" || enc == "raw") target_encoding = IMPULSE_ENC_RAW_UINT32;
+            else if (enc == "raw_uint16" || enc == "uint16") target_encoding = IMPULSE_ENC_RAW_UINT16;
+        } else if (arg == "--simdcomp") {
+            override_target_encoding = true;
+            target_encoding = IMPULSE_ENC_SIMDCOMP;
+        } else if (arg == "--ellpack" || arg == "--sliced_ellpack") {
+            override_target_encoding = true;
+            target_encoding = IMPULSE_ENC_SLICED_ELLPACK;
+        } else if (arg == "--vbyte" || arg == "--delta_vbyte") {
+            override_target_encoding = true;
+            target_encoding = IMPULSE_ENC_DELTA_VBYTE;
+        } else if (arg == "--raw" || arg == "--raw_uint32") {
+            override_target_encoding = true;
+            target_encoding = IMPULSE_ENC_RAW_UINT32;
+        } else if (arg == "--rcm-reorder" || arg == "--optimize") {
+            enable_rcm_reorder = true;
+        }
     }
 
     std::cout << "==========================================================================" << std::endl;
-    std::cout << " IMPULSE-GRAPH C++20 HEAVY OPTIMIZER (64-Byte SIMD Aligned & DataOffset)" << std::endl;
+    std::cout << " IMPULSE-OPT: C++20 ENCODING TRANSLATOR & HEAVY OPTIMIZER (v2.4.0)" << std::endl;
     std::cout << "==========================================================================" << std::endl;
     std::cout << " Input Snapshot File:  " << input_path << std::endl;
     std::cout << " Output Snapshot File: " << output_path << std::endl;
-    std::cout << " Degree Permutation:   " << (enable_optimize ? "ENABLED" : "DISABLED (Preserve Original Order)") << std::endl;
-    std::cout << " VByte / SIMDComp Opt: " << (enable_vbyte ? "ENABLED (0x01)" : "DISABLED") << std::endl;
-    std::cout << " RAW uint16 Opt:       " << (enable_uint16 ? "ENABLED (0x02)" : "DISABLED") << std::endl;
-    std::cout << " HYBRID uint16/32 Opt: " << (enable_hybrid ? "ENABLED (0x03)" : "DISABLED") << std::endl;
+    std::cout << " RCM Cache Reorder:   " << (enable_rcm_reorder ? "ENABLED" : "DISABLED") << std::endl;
+    std::cout << " Target Encoding:      0x" << std::hex << (int)target_encoding << std::dec << " (" 
+              << (target_encoding == IMPULSE_ENC_SIMDCOMP ? "SIMDComp Bitpacked" : 
+                 (target_encoding == IMPULSE_ENC_SLICED_ELLPACK ? "Sliced ELLPACK GPU" : 
+                 (target_encoding == IMPULSE_ENC_DELTA_VBYTE ? "Delta-VByte" : "Raw uint32")))
+              << ")" << std::endl;
 
     auto t_start_total = std::chrono::high_resolution_clock::now();
 
-    // 1. Read Binary File
-    auto t0 = std::chrono::high_resolution_clock::now();
     std::ifstream ifs(input_path, std::ios::binary | std::ios::ate);
     if (!ifs.is_open()) {
         std::cerr << "[!] Error opening input snapshot file: " << input_path << std::endl;
         return 1;
     }
 
-    std::streamsize file_size = ifs.tellg();
+    size_t file_size = ifs.tellg();
     ifs.seekg(0, std::ios::beg);
 
     if (file_size < 58) {
-        std::cerr << "[!] Snapshot file too small: " << file_size << " bytes" << std::endl;
+        std::cerr << "[!] Input snapshot file too small: " << file_size << " bytes" << std::endl;
         return 1;
     }
 
     std::vector<uint8_t> buffer(file_size);
     if (!ifs.read(reinterpret_cast<char*>(buffer.data()), file_size)) {
-        std::cerr << "[!] Error reading snapshot buffer" << std::endl;
+        std::cerr << "[!] Error reading input snapshot file" << std::endl;
         return 1;
     }
     ifs.close();
-    auto t_read = std::chrono::high_resolution_clock::now();
 
-    // 2. Parse Header
-    uint32_t magic = *reinterpret_cast<uint32_t*>(buffer.data());
-    uint16_t version = *reinterpret_cast<uint16_t*>(buffer.data() + 4);
-
-    if (magic != 0x494D5053) {
-        std::cerr << "[!] Invalid magic bytes: 0x" << std::hex << magic << std::dec << std::endl;
+    const auto* hdr = reinterpret_cast<const impulse_snapshot_header_t*>(buffer.data());
+    if (hdr->magic != IMPULSE_MAGIC) {
+        std::cerr << "[!] Invalid magic bytes: 0x" << std::hex << hdr->magic << std::dec << std::endl;
         return 1;
     }
 
-    size_t data_offset = 58;
-    uint16_t domain_count = 0;
-    uint16_t relation_count = 0;
-    uint64_t kafka_offset = 0;
-    uint64_t timestamp_ms = 0;
-    const uint8_t* expected_sha256 = nullptr;
-
-    if (version >= 2 && file_size >= 64) {
-        data_offset = *reinterpret_cast<uint32_t*>(buffer.data() + 6);
-        domain_count = *reinterpret_cast<uint16_t*>(buffer.data() + 10);
-        relation_count = *reinterpret_cast<uint16_t*>(buffer.data() + 12);
-        kafka_offset = *reinterpret_cast<uint64_t*>(buffer.data() + 14);
-        timestamp_ms = *reinterpret_cast<uint64_t*>(buffer.data() + 22);
-        expected_sha256 = buffer.data() + 30;
-    } else {
-        domain_count = *reinterpret_cast<uint16_t*>(buffer.data() + 6);
-        relation_count = *reinterpret_cast<uint16_t*>(buffer.data() + 8);
-        kafka_offset = *reinterpret_cast<uint64_t*>(buffer.data() + 10);
-        timestamp_ms = *reinterpret_cast<uint64_t*>(buffer.data() + 18);
-        expected_sha256 = buffer.data() + 26;
-        data_offset = 58;
-    }
+    size_t data_offset = hdr->data_offset;
+    if (hdr->version < 2 || data_offset == 0) data_offset = 64;
 
     uint8_t computed_sha256[32];
     CC_SHA256(buffer.data() + data_offset, file_size - data_offset, computed_sha256);
-
-    std::string expected_hex = bytes_to_hex(expected_sha256, 32);
-
-    if (std::memcmp(expected_sha256, computed_sha256, 32) != 0) {
-        std::cerr << "[!] SHA256 Checksum mismatch during C++ input load!" << std::endl;
+    if (std::memcmp(hdr->sha256_checksum, computed_sha256, 32) != 0) {
+        std::cerr << "[!] Input SHA256 checksum mismatch! File may be corrupt." << std::endl;
         return 1;
     }
-    std::cout << " [✓] Payload SHA256 Checksum Verified Cleanly! (DataOffset=" << data_offset << " bytes)" << std::endl;
 
-    // 3. Unpack Domains & Relations
-    auto t1 = std::chrono::high_resolution_clock::now();
+    std::cout << " [✓] Input SHA256 Checksum Verified Cleanly! (DataOffset=" << data_offset << " bytes)" << std::endl;
+
+    // Parse Section 2 Part A: Domain Catalog
     size_t offset = data_offset;
+    std::vector<DomainData> domains;
 
-    std::vector<DomainData> domains(domain_count);
-    for (uint16_t d = 0; d < domain_count; ++d) {
-        std::memcpy(&domains[d].domain_id, buffer.data() + offset, 2); offset += 2;
-        domains[d].key_type = buffer[offset++];
-        uint16_t name_len;
-        std::memcpy(&name_len, buffer.data() + offset, 2); offset += 2;
-        domains[d].name.assign(reinterpret_cast<char*>(buffer.data() + offset), name_len); offset += name_len;
+    for (uint16_t d = 0; d < hdr->domain_count; ++d) {
+        if (offset + sizeof(impulse_domain_catalog_entry_header_t) > file_size) break;
+        const auto* dom_hdr = reinterpret_cast<const impulse_domain_catalog_entry_header_t*>(buffer.data() + offset);
+        size_t start_dom_offset = offset;
+        offset += sizeof(impulse_domain_catalog_entry_header_t);
 
-        uint32_t map_count;
-        std::memcpy(&map_count, buffer.data() + offset, 4); offset += 4;
-        domains[d].mappings.resize(map_count);
-        for (uint32_t m = 0; m < map_count; ++m) {
-            std::memcpy(&domains[d].mappings[m].dense_id, buffer.data() + offset, 4); offset += 4;
-            uint16_t bk_len;
-            std::memcpy(&bk_len, buffer.data() + offset, 2); offset += 2;
-            domains[d].mappings[m].business_key.assign(reinterpret_cast<char*>(buffer.data() + offset), bk_len); offset += bk_len;
+        std::string name(reinterpret_cast<const char*>(buffer.data() + offset), dom_hdr->name_len);
+        offset += dom_hdr->name_len;
+
+        DomainData ddata;
+        ddata.domain_id = dom_hdr->domain_id;
+        ddata.key_type = dom_hdr->key_type;
+        ddata.name = name;
+
+        // Skip string mappings if present
+        if (offset + 4 <= file_size) {
+            uint32_t map_count = *reinterpret_cast<const uint32_t*>(buffer.data() + offset);
+            offset += 4;
+            for (uint32_t m = 0; m < map_count; ++m) {
+                if (offset + 6 > file_size) break;
+                offset += 4;
+                uint16_t bk_len = *reinterpret_cast<const uint16_t*>(buffer.data() + offset);
+                offset += 2 + bk_len;
+            }
         }
+
+        ddata.raw_payload.assign(buffer.data() + start_dom_offset, buffer.data() + offset);
+        domains.push_back(std::move(ddata));
     }
 
-    std::vector<RelationData> relations(relation_count);
-    for (uint16_t r = 0; r < relation_count; ++r) {
-        std::memcpy(&relations[r].src_domain_id, buffer.data() + offset, 2); offset += 2;
-        std::memcpy(&relations[r].tgt_domain_id, buffer.data() + offset, 2); offset += 2;
-        
-        if (version >= 2) {
-            relations[r].encoding_type = buffer[offset++];
+    size_t rem64 = offset % 64;
+    if (rem64 != 0) offset += (64 - rem64);
+
+    // Parse Section 2 Part B: Relation Directory & CSR Streams
+    std::vector<RelationData> relations;
+
+    for (uint16_t r = 0; r < hdr->relation_count; ++r) {
+        uint16_t src_dom = 0, tgt_dom = 0;
+        uint8_t enc_type = 0;
+        uint64_t node_count = 0, edge_count = 0, sec_features = 0;
+        uint64_t row_off_offset = 0, row_off_bytes = 0;
+        uint64_t col_idx_offset = 0, col_idx_bytes = 0;
+
+        if (data_offset == 4096) {
+            if (offset + sizeof(impulse_relation_directory_entry_t) > file_size) break;
+            const auto* entry = reinterpret_cast<const impulse_relation_directory_entry_t*>(buffer.data() + offset);
+            offset += sizeof(impulse_relation_directory_entry_t);
+
+            src_dom = entry->src_domain_id;
+            tgt_dom = entry->tgt_domain_id;
+            enc_type = entry->encoding_type;
+            node_count = entry->node_count;
+            edge_count = entry->edge_count;
+            sec_features = entry->section_features;
+            row_off_offset = entry->csr_row_off_offset;
+            row_off_bytes = entry->csr_row_off_bytes;
+            col_idx_offset = entry->csr_col_idx_offset;
+            col_idx_bytes = entry->csr_col_idx_bytes;
         } else {
-            relations[r].encoding_type = ENCODING_RAW_UINT32;
+            if (offset + 33 > file_size) break;
+            src_dom = *reinterpret_cast<const uint16_t*>(buffer.data() + offset); offset += 2;
+            tgt_dom = *reinterpret_cast<const uint16_t*>(buffer.data() + offset); offset += 2;
+            enc_type = buffer[offset++];
+            node_count = *reinterpret_cast<const uint32_t*>(buffer.data() + offset); offset += 4;
+            edge_count = *reinterpret_cast<const uint64_t*>(buffer.data() + offset); offset += 8;
+            row_off_bytes = *reinterpret_cast<const uint64_t*>(buffer.data() + offset); offset += 8;
+            col_idx_bytes = *reinterpret_cast<const uint64_t*>(buffer.data() + offset); offset += 8;
+            row_off_offset = offset;
+            col_idx_offset = offset + row_off_bytes;
         }
 
-        std::memcpy(&relations[r].node_count, buffer.data() + offset, 4); offset += 4;
-        std::memcpy(&relations[r].edge_count, buffer.data() + offset, 8); offset += 8;
+        std::cout << "\n Translating Relation [" << r << "]: Src=" << src_dom << " -> Tgt=" << tgt_dom << std::endl;
+        std::cout << "   - Input Encoding:    0x" << std::hex << (int)enc_type << std::dec << std::endl;
+        std::cout << "   - Input Scale:       N=" << node_count << " nodes, E=" << edge_count << " edges" << std::endl;
 
-        uint64_t row_off_bytes, col_idx_bytes;
-        std::memcpy(&row_off_bytes, buffer.data() + offset, 8); offset += 8;
-        std::memcpy(&col_idx_bytes, buffer.data() + offset, 8); offset += 8;
-
-        uint32_t num_row_offsets = row_off_bytes / 4;
-        relations[r].row_offsets.resize(num_row_offsets);
-        std::memcpy(relations[r].row_offsets.data(), buffer.data() + offset, row_off_bytes); offset += row_off_bytes;
-
-        uint32_t num_col_indices;
-        if (relations[r].encoding_type == ENCODING_RAW_UINT16) {
-            num_col_indices = col_idx_bytes / 2;
-            relations[r].column_indices.resize(num_col_indices);
-            const uint16_t* u16_ptr = reinterpret_cast<const uint16_t*>(buffer.data() + offset);
-            for (uint32_t c = 0; c < num_col_indices; ++c) {
-                relations[r].column_indices[c] = u16_ptr[c];
-            }
-            offset += col_idx_bytes;
-        } else if (relations[r].encoding_type == ENCODING_HYBRID_UINT16_UINT32) {
-            relations[r].column_indices.resize(relations[r].edge_count);
-            uint32_t col_ptr = 0;
-            for (uint32_t node = 0; node <= relations[r].node_count; ++node) {
-                uint32_t start = relations[r].row_offsets[node];
-                uint32_t end = relations[r].row_offsets[node + 1];
-                uint32_t row_len = end - start;
-                uint16_t num_hot = *reinterpret_cast<const uint16_t*>(buffer.data() + offset); offset += 2;
-                for (uint16_t i = 0; i < num_hot; ++i) {
-                    uint16_t tgt16 = *reinterpret_cast<const uint16_t*>(buffer.data() + offset); offset += 2;
-                    relations[r].column_indices[col_ptr++] = tgt16;
-                }
-                for (uint32_t i = num_hot; i < row_len; ++i) {
-                    uint32_t tgt32 = *reinterpret_cast<const uint32_t*>(buffer.data() + offset); offset += 4;
-                    relations[r].column_indices[col_ptr++] = tgt32;
-                }
-            }
-        } else {
-            num_col_indices = col_idx_bytes / 4;
-            relations[r].column_indices.resize(num_col_indices);
-            std::memcpy(relations[r].column_indices.data(), buffer.data() + offset, col_idx_bytes); offset += col_idx_bytes;
+        // Unpack RowOffsets
+        std::vector<uint32_t> row_offsets(node_count + 2, 0);
+        if (row_off_offset + row_off_bytes <= file_size) {
+            std::memcpy(row_offsets.data(), buffer.data() + row_off_offset, row_off_bytes);
         }
-    }
-    auto t_unpack = std::chrono::high_resolution_clock::now();
 
-    // 4. Perform Heavy Graph Optimization: Degree Permutation & Ascending Sort
-    std::cout << "\n--------------------------------------------------------------------------" << std::endl;
-    std::cout << " EXECUTING DEGREE PERMUTATION & VBYTE / SIMDCOMP EDGE COMPRESSION..." << std::endl;
-    std::cout << "--------------------------------------------------------------------------" << std::endl;
+        // Unpack ColumnIndices based on Input Encoding
+        std::vector<uint32_t> column_indices;
+        column_indices.reserve(edge_count);
 
-    for (uint16_t r = 0; r < relation_count; ++r) {
-        RelationData& rel = relations[r];
-        if (rel.node_count == 0 || rel.edge_count == 0) continue;
-
-        if (enable_optimize) {
-            std::vector<uint32_t> degrees(rel.node_count + 1, 0);
-            for (uint32_t node = 0; node <= rel.node_count; ++node) {
-                degrees[node] = rel.row_offsets[node + 1] - rel.row_offsets[node];
-            }
-
-            std::vector<uint32_t> perm(rel.node_count + 1);
-            std::iota(perm.begin(), perm.end(), 0);
-            std::sort(perm.begin(), perm.end(), [&](uint32_t a, uint32_t b) {
-                return degrees[a] > degrees[b];
-            });
-
-            std::vector<uint32_t> old_to_new(rel.node_count + 1);
-            for (uint32_t new_id = 0; new_id <= rel.node_count; ++new_id) {
-                old_to_new[perm[new_id]] = new_id;
-            }
-
-            std::vector<uint32_t> new_column_indices;
-            std::vector<uint32_t> new_row_offsets(rel.node_count + 2, 0);
-
-            uint32_t curr_off = 0;
-            for (uint32_t new_node = 0; new_node <= rel.node_count; ++new_node) {
-                new_row_offsets[new_node] = curr_off;
-                uint32_t old_node = perm[new_node];
-                uint32_t start = rel.row_offsets[old_node];
-                uint32_t end = rel.row_offsets[old_node + 1];
-
-                std::vector<uint32_t> neighbors;
+        if (enc_type == IMPULSE_ENC_DELTA_VBYTE) {
+            size_t col_off = col_idx_offset;
+            size_t col_end = col_idx_offset + col_idx_bytes;
+            for (size_t node = 0; node <= node_count; ++node) {
+                uint32_t start = row_offsets[node];
+                uint32_t end = row_offsets[node + 1];
+                uint32_t prev_tgt = 0;
                 for (uint32_t idx = start; idx < end; ++idx) {
-                    uint32_t old_tgt = rel.column_indices[idx];
-                    uint32_t new_tgt = (old_tgt <= rel.node_count) ? old_to_new[old_tgt] : old_tgt;
-                    neighbors.push_back(new_tgt);
-                }
-
-                std::sort(neighbors.begin(), neighbors.end());
-
-                for (uint32_t tgt : neighbors) {
-                    new_column_indices.push_back(tgt);
-                    curr_off++;
+                    uint32_t delta = static_cast<uint32_t>(read_vbyte(buffer.data(), col_off, col_end));
+                    uint32_t tgt = (idx == start) ? delta : (prev_tgt + delta);
+                    column_indices.push_back(tgt);
+                    prev_tgt = tgt;
                 }
             }
-            new_row_offsets[rel.node_count + 1] = curr_off;
+        } else if (enc_type == IMPULSE_ENC_SIMDCOMP) {
+            std::vector<uint32_t> deltas;
+            decode_simdcomp(buffer.data() + col_idx_offset, col_idx_bytes, edge_count, deltas);
 
-            rel.row_offsets = std::move(new_row_offsets);
-            rel.column_indices = std::move(new_column_indices);
-            rel.edge_count = rel.column_indices.size();
+            size_t delta_ptr = 0;
+            for (size_t node = 0; node <= node_count; ++node) {
+                uint32_t start = row_offsets[node];
+                uint32_t end = row_offsets[node + 1];
+                uint32_t prev_tgt = 0;
+                for (uint32_t idx = start; idx < end; ++idx) {
+                    uint32_t delta = (delta_ptr < deltas.size()) ? deltas[delta_ptr++] : 0;
+                    uint32_t tgt = (idx == start) ? delta : (prev_tgt + delta);
+                    column_indices.push_back(tgt);
+                    prev_tgt = tgt;
+                }
+            }
+        } else if (enc_type == IMPULSE_ENC_SLICED_ELLPACK) {
+            decode_sliced_ellpack(buffer.data() + col_idx_offset, col_idx_bytes, row_offsets, node_count, column_indices);
         } else {
-            for (uint32_t node = 0; node <= rel.node_count; ++node) {
-                uint32_t start = rel.row_offsets[node];
-                uint32_t end = rel.row_offsets[node + 1];
-                if (start < end && end <= rel.column_indices.size()) {
-                    std::sort(rel.column_indices.begin() + start, rel.column_indices.begin() + end);
+            // RAW_UINT32
+            if (col_idx_offset + edge_count * 4 <= file_size) {
+                column_indices.resize(edge_count);
+                std::memcpy(column_indices.data(), buffer.data() + col_idx_offset, edge_count * 4);
+            }
+        }
+
+        // Apply RCM Reordering if requested
+        if (enable_rcm_reorder && node_count > 0 && edge_count > 0) {
+            for (size_t node = 0; node <= node_count; ++node) {
+                uint32_t start = row_offsets[node];
+                uint32_t end = row_offsets[node + 1];
+                if (start < end && end <= column_indices.size()) {
+                    std::sort(column_indices.begin() + start, column_indices.begin() + end);
                 }
             }
         }
 
-        if (enable_vbyte) {
-            rel.encoding_type = ENCODING_DELTA_VBYTE;
-        } else if (enable_hybrid) {
-            rel.encoding_type = ENCODING_HYBRID_UINT16_UINT32;
-        } else if (enable_uint16) {
-            bool all_fit_u16 = true;
-            for (uint32_t tgt : rel.column_indices) {
-                if (tgt >= 65536) {
-                    all_fit_u16 = false;
-                    break;
-                }
-            }
-            if (all_fit_u16) {
-                rel.encoding_type = ENCODING_RAW_UINT16;
-            }
-        }
+        uint8_t out_enc = override_target_encoding ? target_encoding : enc_type;
+        uint64_t out_sec_flags = (sec_features & ~0x1FFULL) | (1ULL << out_enc);
 
-        std::cout << "   Relation [" << r << "]: " << rel.node_count << " nodes & " << rel.edge_count 
-                  << " edges (Encoding 0x" << std::hex << (int)rel.encoding_type << std::dec << ")" << std::endl;
+        RelationData rdata;
+        rdata.src_domain_id = src_dom;
+        rdata.tgt_domain_id = tgt_dom;
+        rdata.encoding_type = out_enc;
+        rdata.node_count = node_count;
+        rdata.edge_count = column_indices.size();
+        rdata.section_features = out_sec_flags;
+        rdata.row_offsets = std::move(row_offsets);
+        rdata.column_indices = std::move(column_indices);
+
+        relations.push_back(std::move(rdata));
     }
 
-    auto t_opt = std::chrono::high_resolution_clock::now();
+    // Re-serialize v2.4.0 4KB Aligned Output Snapshot using C-ABI Writer Builder API
+    impulse_writer_t* writer = impulse_writer_create(output_path.c_str(), hdr->global_required_features);
+    if (!writer) {
+        std::cerr << "[!] Error creating C-ABI snapshot writer: " << impulse_get_last_error() << std::endl;
+        return 1;
+    }
 
-    // 5. Re-serialize Canonical Binary Payload with 64-byte Memory Alignment
-    std::vector<uint8_t> payload;
-
-    // Serialize Domain Section
     for (const auto& dom : domains) {
-        uint16_t d_id = dom.domain_id;
-        uint8_t k_type = dom.key_type;
-        uint16_t n_len = dom.name.size();
-        payload.insert(payload.end(), reinterpret_cast<uint8_t*>(&d_id), reinterpret_cast<uint8_t*>(&d_id) + 2);
-        payload.push_back(k_type);
-        payload.insert(payload.end(), reinterpret_cast<uint8_t*>(&n_len), reinterpret_cast<uint8_t*>(&n_len) + 2);
-        payload.insert(payload.end(), dom.name.begin(), dom.name.end());
-
-        uint32_t m_count = dom.mappings.size();
-        payload.insert(payload.end(), reinterpret_cast<uint8_t*>(&m_count), reinterpret_cast<uint8_t*>(&m_count) + 4);
-        for (const auto& m : dom.mappings) {
-            uint32_t dense_id = m.dense_id;
-            uint16_t bk_len = m.business_key.size();
-            payload.insert(payload.end(), reinterpret_cast<uint8_t*>(&dense_id), reinterpret_cast<uint8_t*>(&dense_id) + 4);
-            payload.insert(payload.end(), reinterpret_cast<uint8_t*>(&bk_len), reinterpret_cast<uint8_t*>(&bk_len) + 2);
-            payload.insert(payload.end(), m.business_key.begin(), m.business_key.end());
-        }
+        impulse_writer_add_domain(writer, dom.domain_id, dom.key_type, dom.name.c_str());
     }
-    std::cout << "[DEBUG C++] Domain Payload Size: " << payload.size() << " bytes" << std::endl;
-    pad64(payload); // 64-byte align end of Domain section
-    std::cout << "[DEBUG C++] Padded Domain Payload Size: " << payload.size() << " bytes" << std::endl;
 
-    // Serialize Relation Section
     for (const auto& rel : relations) {
-        uint16_t src_id = rel.src_domain_id;
-        uint16_t tgt_id = rel.tgt_domain_id;
-        uint8_t enc_type = rel.encoding_type;
-        uint32_t node_count = rel.node_count;
-        uint64_t edge_count = rel.edge_count;
-        uint64_t row_off_bytes = rel.row_offsets.size() * 4;
-
-        std::vector<uint8_t> encoded_col_bytes;
-        if (enc_type == ENCODING_DELTA_VBYTE) {
-            for (uint32_t node = 0; node <= rel.node_count; ++node) {
+        std::vector<uint8_t> encoded_cols;
+        if (rel.encoding_type == IMPULSE_ENC_DELTA_VBYTE) {
+            for (size_t node = 0; node <= rel.node_count; ++node) {
                 uint32_t start = rel.row_offsets[node];
                 uint32_t end = rel.row_offsets[node + 1];
                 uint32_t prev_tgt = 0;
                 for (uint32_t idx = start; idx < end; ++idx) {
                     uint32_t tgt = rel.column_indices[idx];
                     uint32_t delta = (idx == start) ? tgt : (tgt - prev_tgt);
-                    write_vbyte(encoded_col_bytes, delta);
+                    write_vbyte(encoded_cols, delta);
                     prev_tgt = tgt;
                 }
             }
-        } else if (enc_type == ENCODING_HYBRID_UINT16_UINT32) {
-            for (uint32_t node = 0; node <= rel.node_count; ++node) {
-                uint32_t start = rel.row_offsets[node];
-                uint32_t end = rel.row_offsets[node + 1];
-                uint16_t num_hot = 0;
-                for (uint32_t idx = start; idx < end; ++idx) {
-                    if (rel.column_indices[idx] < 65536) {
-                        num_hot++;
-                    } else {
-                        break;
-                    }
-                }
-                const uint8_t* hot_ptr = reinterpret_cast<const uint8_t*>(&num_hot);
-                encoded_col_bytes.insert(encoded_col_bytes.end(), hot_ptr, hot_ptr + 2);
-                for (uint32_t idx = start; idx < start + num_hot; ++idx) {
-                    uint16_t tgt16 = static_cast<uint16_t>(rel.column_indices[idx]);
-                    const uint8_t* ptr = reinterpret_cast<const uint8_t*>(&tgt16);
-                    encoded_col_bytes.insert(encoded_col_bytes.end(), ptr, ptr + 2);
-                }
-                for (uint32_t idx = start + num_hot; idx < end; ++idx) {
-                    uint32_t tgt32 = rel.column_indices[idx];
-                    const uint8_t* ptr = reinterpret_cast<const uint8_t*>(&tgt32);
-                    encoded_col_bytes.insert(encoded_col_bytes.end(), ptr, ptr + 4);
-                }
-            }
-        } else if (enc_type == ENCODING_RAW_UINT16) {
-            for (uint32_t tgt : rel.column_indices) {
-                uint16_t tgt16 = static_cast<uint16_t>(tgt);
-                const uint8_t* ptr = reinterpret_cast<const uint8_t*>(&tgt16);
-                encoded_col_bytes.insert(encoded_col_bytes.end(), ptr, ptr + 2);
-            }
+        } else if (rel.encoding_type == IMPULSE_ENC_SIMDCOMP) {
+            encode_simdcomp(encoded_cols, rel.row_offsets, rel.column_indices, rel.node_count);
+        } else if (rel.encoding_type == IMPULSE_ENC_SLICED_ELLPACK) {
+            encode_sliced_ellpack(encoded_cols, rel.row_offsets, rel.column_indices, rel.node_count);
         } else {
-            const uint8_t* c_ptr = reinterpret_cast<const uint8_t*>(rel.column_indices.data());
-            encoded_col_bytes.assign(c_ptr, c_ptr + rel.column_indices.size() * 4);
+            const uint8_t* ptr = reinterpret_cast<const uint8_t*>(rel.column_indices.data());
+            encoded_cols.assign(ptr, ptr + rel.column_indices.size() * sizeof(uint32_t));
         }
 
-        uint64_t col_idx_bytes = encoded_col_bytes.size();
-
-        payload.insert(payload.end(), reinterpret_cast<uint8_t*>(&src_id), reinterpret_cast<uint8_t*>(&src_id) + 2);
-        payload.insert(payload.end(), reinterpret_cast<uint8_t*>(&tgt_id), reinterpret_cast<uint8_t*>(&tgt_id) + 2);
-        payload.push_back(enc_type);
-        payload.insert(payload.end(), reinterpret_cast<uint8_t*>(&node_count), reinterpret_cast<uint8_t*>(&node_count) + 4);
-        payload.insert(payload.end(), reinterpret_cast<uint8_t*>(&edge_count), reinterpret_cast<uint8_t*>(&edge_count) + 8);
-        payload.insert(payload.end(), reinterpret_cast<uint8_t*>(&row_off_bytes), reinterpret_cast<uint8_t*>(&row_off_bytes) + 8);
-        payload.insert(payload.end(), reinterpret_cast<uint8_t*>(&col_idx_bytes), reinterpret_cast<uint8_t*>(&col_idx_bytes) + 8);
-        pad64(payload); // 64-byte align before rowOffsets array
-
-        const uint8_t* r_ptr = reinterpret_cast<const uint8_t*>(rel.row_offsets.data());
-        payload.insert(payload.end(), r_ptr, r_ptr + row_off_bytes);
-        pad64(payload); // 64-byte align rowOffsets array
-
-        payload.insert(payload.end(), encoded_col_bytes.begin(), encoded_col_bytes.end());
-        pad64(payload); // 64-byte align columnIndices array
+        impulse_writer_add_relation(
+            writer, rel.src_domain_id, rel.tgt_domain_id, rel.encoding_type,
+            rel.node_count, rel.edge_count, rel.section_features,
+            rel.row_offsets.data(), rel.row_offsets.size() * sizeof(uint32_t),
+            encoded_cols.data(), encoded_cols.size()
+        );
     }
 
-    // Compute New SHA256 Digest over padded payload
-    uint8_t new_sha256[32];
-    CC_SHA256(payload.data(), payload.size(), new_sha256);
+    impulse_status_t status = impulse_writer_finalize(writer);
+    impulse_writer_destroy(writer);
 
-    // Build 64-byte Aligned Header
-    SnapshotHeader out_header;
-    out_header.magic = 0x494D5053;
-    out_header.version = 2;
-    out_header.data_offset = 64;
-    out_header.domain_count = domain_count;
-    out_header.relation_count = relation_count;
-    out_header.kafka_offset = kafka_offset;
-    out_header.timestamp_ms = timestamp_ms;
-    std::memcpy(out_header.sha256, new_sha256, 32);
-    std::memset(out_header.reserved, 0x00, sizeof(out_header.reserved));
-
-    std::ofstream ofs(output_path, std::ios::binary);
-    if (!ofs.is_open()) {
-        std::cerr << "[!] Error creating output snapshot file: " << output_path << std::endl;
+    if (status != IMPULSE_OK) {
+        std::cerr << "[!] C-ABI impulse_writer_finalize failed: " << impulse_get_last_error() << std::endl;
         return 1;
     }
 
-    ofs.write(reinterpret_cast<char*>(&out_header), sizeof(SnapshotHeader)); // 64 bytes
-    ofs.write(reinterpret_cast<char*>(payload.data()), payload.size());
-    ofs.close();
-
     auto t_end_total = std::chrono::high_resolution_clock::now();
-
-    double ms_read = std::chrono::duration<double, std::milli>(t_read - t0).count();
-    double ms_unpack = std::chrono::duration<double, std::milli>(t_unpack - t_read).count();
-    double ms_opt = std::chrono::duration<double, std::milli>(t_opt - t_unpack).count();
-    double ms_save = std::chrono::duration<double, std::milli>(t_end_total - t_opt).count();
-    double ms_total = std::chrono::duration<double, std::milli>(t_end_total - t_start_total).count();
+    double total_ms = std::chrono::duration<double, std::milli>(t_end_total - t_start_total).count();
 
     std::cout << "\n==========================================================================" << std::endl;
-    std::cout << " C++20 HEAVY OPTIMIZER PERFORMANCE BREAKDOWN (64-Byte Aligned)" << std::endl;
-    std::cout << "==========================================================================" << std::endl;
-    std::cout << " Total Execution Time:        " << ms_total << " ms" << std::endl;
-    std::cout << " NEW Optimized SHA256:         " << bytes_to_hex(new_sha256, 32) << std::endl;
-    std::cout << " [✓] 64-Byte SIMD-Aligned Snapshot Saved: " << output_path << std::endl;
+    std::cout << " [✓] SNAPSHOT ENCODING TRANSLATION & OPTIMIZATION COMPLETE (C-ABI Writer API)!" << std::endl;
+    std::cout << " Output File:     " << output_path << std::endl;
+    std::cout << " Execution Time:  " << total_ms << " ms" << std::endl;
     std::cout << "==========================================================================" << std::endl;
 
     return 0;

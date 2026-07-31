@@ -63,4 +63,5 @@ site/
 *.imps
 impulse-compile/impulse-compile
 impulse-inspect/impulse-inspect
+impulse-opt/impulse-opt
 datasets/
