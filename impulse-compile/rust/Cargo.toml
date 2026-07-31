@@ -1,0 +1,13 @@
+[package]
+name = "impulse-compile"
+version = "2.4.0"
+edition = "2021"
+description = "Impulse Graph Engine snapshot compiler — builds .imps snapshots from TSV edge lists and JSON manifests via C-ABI"
+license = "Apache-2.0"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[build-dependencies]
+bindgen = "0.70"
