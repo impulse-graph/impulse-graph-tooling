@@ -1,0 +1,17 @@
+{
+  "version": "2.4.0",
+  "global_features": ["4kb_page_aligned"],
+  "domains": [
+    { "id": 0, "name": "User", "key_type": "string" },
+    { "id": 1, "name": "Group", "key_type": "string" }
+  ],
+  "relations": [
+    {
+      "src_domain": 0,
+      "tgt_domain": 1,
+      "encoding": "delta_vbyte",
+      "features": ["weighted_edges"],
+      "file": "user_group.tsv"
+    }
+  ]
+}
