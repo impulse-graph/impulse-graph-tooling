@@ -214,18 +214,31 @@ public:
                 rel.encoding = IMPULSE_ENC_RAW_UINT32;
                 rel.section_features = IMPULSE_RELATION_FEAT_ENC_RAW_UINT32;
 
-                if (content.find("\"encoding\": \"simdcomp\"") != std::string::npos || content.find("\"simdcomp\"") != std::string::npos) {
+                if (line.find("simdcomp") != std::string::npos) {
                     rel.encoding = IMPULSE_ENC_SIMDCOMP;
                     rel.section_features = IMPULSE_RELATION_FEAT_ENC_SIMDCOMP;
-                } else if (content.find("\"encoding\": \"sliced_ellpack\"") != std::string::npos || content.find("\"sliced_ellpack\"") != std::string::npos || content.find("\"ellpack\"") != std::string::npos) {
+                } else if (line.find("sliced_ellpack") != std::string::npos || line.find("ellpack") != std::string::npos) {
                     rel.encoding = IMPULSE_ENC_SLICED_ELLPACK;
                     rel.section_features = IMPULSE_RELATION_FEAT_ENC_SLICED_ELLPACK;
-                } else if (content.find("\"encoding\": \"delta_vbyte\"") != std::string::npos || content.find("\"delta_vbyte\"") != std::string::npos) {
+                } else if (line.find("delta_vbyte") != std::string::npos) {
                     rel.encoding = IMPULSE_ENC_DELTA_VBYTE;
                     rel.section_features = IMPULSE_RELATION_FEAT_ENC_DELTA_VBYTE;
-                } else if (content.find("\"encoding\": \"raw_uint32\"") != std::string::npos || content.find("\"raw_uint32\"") != std::string::npos) {
+                } else if (line.find("raw_uint32") != std::string::npos) {
                     rel.encoding = IMPULSE_ENC_RAW_UINT32;
                     rel.section_features = IMPULSE_RELATION_FEAT_ENC_RAW_UINT32;
+                }
+
+                if (line.find("weighted_edges") != std::string::npos || content.find("weighted_edges") != std::string::npos) {
+                    rel.section_features |= IMPULSE_RELATION_FEAT_WEIGHTED_EDGES;
+                }
+                if (line.find("kv_labels") != std::string::npos || content.find("kv_labels") != std::string::npos) {
+                    rel.section_features |= IMPULSE_RELATION_FEAT_KV_LABELS;
+                }
+                if (line.find("temporal_timestamps") != std::string::npos || content.find("temporal_timestamps") != std::string::npos) {
+                    rel.section_features |= IMPULSE_RELATION_FEAT_TEMPORAL_TIMESTAMPS;
+                }
+                if (line.find("incoming_csr_index") != std::string::npos || content.find("incoming_csr_index") != std::string::npos) {
+                    rel.section_features |= IMPULSE_RELATION_FEAT_INCOMING_CSR_INDEX;
                 }
 
                 size_t q1 = line.find('"', line.find("\"file\"") + 6);
