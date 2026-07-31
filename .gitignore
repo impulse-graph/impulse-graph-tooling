@@ -61,6 +61,9 @@ site/
 # Binary test outputs & downloaded datasets
 *.bin
 *.imps
+*.tsv
+*.csv
+*.zst
 impulse-compile/impulse-compile
 impulse-inspect/impulse-inspect
 impulse-opt/impulse-opt
