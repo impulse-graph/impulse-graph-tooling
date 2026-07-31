@@ -64,4 +64,5 @@ site/
 impulse-compile/impulse-compile
 impulse-inspect/impulse-inspect
 impulse-opt/impulse-opt
+impulse-opt/impulse-opt-static
 datasets/
