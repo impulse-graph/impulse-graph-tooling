@@ -8,7 +8,6 @@ Thumbs.db
 !.vscode/tasks.json
 !.vscode/launch.json
 !.vscode/extensions.json
-*.code-workspace
 .idea/
 *.iml
 *.ipr
@@ -64,7 +63,9 @@ site/
 *.tsv
 *.csv
 *.zst
+impulse-compile/impulse-compile
 impulse-compile/cpp/impulse-compile
+impulse-inspect/impulse-inspect
 impulse-inspect/cpp/impulse-inspect
 impulse-opt/impulse-opt
 impulse-opt/impulse-opt-static
