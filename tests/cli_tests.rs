@@ -57,9 +57,11 @@ fn test_full_cli_command_suite() {
         &base_snapshot,
         &opt_snapshot,
         true, // RCM
+        false, // degree_sort
+        false, // csc
         Some("delta_vbyte"),
-        false,
-        false,
+        false, // strip_mappings
+        false, // strip_properties
     );
     assert!(opt_res.is_ok(), "optimize failed: {:?}", opt_res);
     assert!(opt_snapshot.exists(), "Optimized binary snapshot missing");
@@ -110,4 +112,40 @@ fn test_binary_executable_invocation() {
         .expect("Failed to execute impulse-graph binary");
 
     assert!(status.success(), "impulse-graph --help returned non-zero exit status");
+}
+
+#[test]
+fn test_compile_multi_relation_unique_domain_count() {
+    let test_dir = setup_test_workspace();
+
+    let manifest_path = test_dir.join("rbac_manifest.json");
+    let user_group_path = test_dir.join("user_group.tsv");
+    let group_role_path = test_dir.join("group_role.tsv");
+    let output_snapshot = test_dir.join("rbac_snapshot.imps");
+
+    let manifest_json = r#"{
+        "version": "2.4.0",
+        "domains": [
+            { "id": 0, "name": "USER", "key_type": "string" },
+            { "id": 1, "name": "GROUP", "key_type": "string" },
+            { "id": 2, "name": "ROLE", "key_type": "string" }
+        ],
+        "relations": [
+            { "src_domain": 0, "tgt_domain": 1, "encoding": "raw_uint32", "file": "user_group.tsv" },
+            { "src_domain": 1, "tgt_domain": 2, "encoding": "raw_uint32", "file": "group_role.tsv" }
+        ]
+    }"#;
+
+    fs::write(&manifest_path, manifest_json).expect("Failed to write manifest");
+    fs::write(&user_group_path, "u1\tg1\nu2\tg2\n").expect("Failed to write user_group TSV");
+    fs::write(&group_role_path, "g1\tr1\ng2\tr2\n").expect("Failed to write group_role TSV");
+
+    let compile_res = commands::compile::run(&manifest_path, &output_snapshot);
+    assert!(compile_res.is_ok(), "compile failed: {:?}", compile_res);
+
+    let reader = impulse_graph::SnapshotReader::open(&output_snapshot).expect("Failed to open snapshot");
+    assert_eq!(reader.header().domain_count(), 3, "Domain count MUST be exactly 3 for 3 unique domains");
+    assert_eq!(reader.relation_count(), 2, "Relation count MUST be 2");
+
+    let _ = fs::remove_dir_all(&test_dir);
 }

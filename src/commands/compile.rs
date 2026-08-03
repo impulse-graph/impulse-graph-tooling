@@ -65,6 +65,19 @@ pub fn run(manifest_path: &Path, output_path: &Path) -> Result<(), Box<dyn Error
         domain_node_maps.insert(d.id, HashMap::new());
     }
 
+    struct CompiledRelation {
+        src_domain: u16,
+        tgt_domain: u16,
+        encoding: String,
+        include_csc: bool,
+        src_domain_count: u32,
+        edges_count: u64,
+        row_offsets: Vec<u32>,
+        col_indices: Vec<u32>,
+    }
+
+    let mut compiled_relations = Vec::new();
+
     // Process Relations and build Node Maps
     for r in &manifest.relations {
         let edge_file_path = base_dir.join(&r.file);
@@ -103,12 +116,6 @@ pub fn run(manifest_path: &Path, output_path: &Path) -> Result<(), Box<dyn Error
             edges.push((src_idx, tgt_idx));
         }
 
-        // Add domain metadata
-        for d in &manifest.domains {
-            let count = domain_node_maps.get(&d.id).map(|m| m.len() as u64).unwrap_or(0);
-            writer.add_domain(d.id, parse_key_type(&d.key_type), &d.name, count);
-        }
-
         // Sort edges by src_idx then tgt_idx for CSR construction
         edges.sort_unstable();
 
@@ -126,15 +133,35 @@ pub fn run(manifest_path: &Path, output_path: &Path) -> Result<(), Box<dyn Error
             row_offsets[i + 1] += row_offsets[i];
         }
 
-        writer.add_relation_with_csc(
-            r.src_domain,
-            r.tgt_domain,
-            parse_encoding(&r.encoding),
-            src_domain_count as u64,
-            edges.len() as u64,
+        compiled_relations.push(CompiledRelation {
+            src_domain: r.src_domain,
+            tgt_domain: r.tgt_domain,
+            encoding: r.encoding.clone(),
+            include_csc: r.include_csc.unwrap_or(false),
+            src_domain_count,
+            edges_count: edges.len() as u64,
             row_offsets,
             col_indices,
-            r.include_csc.unwrap_or(false),
+        });
+    }
+
+    // Add domain metadata ONCE to SnapshotWriter
+    for d in &manifest.domains {
+        let count = domain_node_maps.get(&d.id).map(|m| m.len() as u64).unwrap_or(0);
+        writer.add_domain(d.id, parse_key_type(&d.key_type), &d.name, count);
+    }
+
+    // Add relations to SnapshotWriter
+    for cr in compiled_relations {
+        writer.add_relation_with_csc(
+            cr.src_domain,
+            cr.tgt_domain,
+            parse_encoding(&cr.encoding),
+            cr.src_domain_count as u64,
+            cr.edges_count,
+            cr.row_offsets,
+            cr.col_indices,
+            cr.include_csc,
         );
     }
 
