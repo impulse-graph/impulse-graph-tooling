@@ -76,3 +76,24 @@ Annotate the `snapshot` field in `src/main.rs` with `#[arg(short, long)]` so bot
 
 ### Mandatory Test Case (Regression Prevention)
 Add a CLI integration test in `tests/cli_test.rs` asserting that `impulse inspect --snapshot <path>` returns exit code `0`.
+
+---
+
+## BUG-TOOL-003: Duplicate Relation Definitions Validation in Compiler & Validator
+
+* **Severity**: High
+* **Component**: `src/commands/compile.rs`, `src/commands/validate.rs`
+* **Affected Versions**: v2.4.0
+
+### Description & Symptoms
+Manifests containing duplicate relation declarations between the same `(src_domain, tgt_domain)` pair were compiled without error, resulting in duplicate relation descriptors in Section 2 Part B of the snapshot.
+
+### Root Cause Analysis
+Neither `impulse compile` nor `impulse validate` checked `(src_domain, tgt_domain)` tuple uniqueness when iterating over relations.
+
+### Proposed Fix
+1. In `compile.rs`: Validate that `(src_domain, tgt_domain)` pairs are unique across `manifest.relations` prior to processing edge files. Reject with `Err("Duplicate relation definition in manifest...")` if a duplicate is found.
+2. In `validate.rs`: Check `reader.relations()` and reject snapshots containing duplicate relation descriptors for the same `(src_domain_id, tgt_domain_id)` pair.
+
+### Mandatory Test Case (Regression Prevention)
+Add integration test `test_compile_duplicate_relation_rejection()` in `tests/cli_tests.rs` asserting that compiling a manifest with duplicate `(src_domain, tgt_domain)` entries fails with an explicit diagnostic error.

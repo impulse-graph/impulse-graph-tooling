@@ -57,7 +57,15 @@ pub fn run(
     }
 
     // 3. Topology & CSR Integrity
+    let mut seen_rel_pairs = std::collections::HashSet::new();
     for (idx, rel) in reader.relations().iter().enumerate() {
+        if !seen_rel_pairs.insert((rel.src_domain_id, rel.tgt_domain_id)) {
+            return Err(format!(
+                "Duplicate relation descriptor detected in catalog for SrcDomain {} -> TgtDomain {} at relation index #{}",
+                rel.src_domain_id, rel.tgt_domain_id, idx
+            )
+            .into());
+        }
         if rel.node_count > 0 {
             let row_offsets = reader.get_row_offsets(idx)?;
             let col_indices = reader.get_col_indices(idx)?;

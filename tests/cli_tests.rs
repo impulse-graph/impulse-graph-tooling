@@ -149,3 +149,34 @@ fn test_compile_multi_relation_unique_domain_count() {
 
     let _ = fs::remove_dir_all(&test_dir);
 }
+
+#[test]
+fn test_compile_duplicate_relation_rejection() {
+    let test_dir = setup_test_workspace();
+
+    let manifest_path = test_dir.join("duplicate_rel_manifest.json");
+    let user_group_path = test_dir.join("user_group.tsv");
+    let output_snapshot = test_dir.join("dup_rel_snapshot.imps");
+
+    let manifest_json = r#"{
+        "version": "2.4.0",
+        "domains": [
+            { "id": 0, "name": "USER", "key_type": "string" },
+            { "id": 1, "name": "GROUP", "key_type": "string" }
+        ],
+        "relations": [
+            { "src_domain": 0, "tgt_domain": 1, "encoding": "raw_uint32", "file": "user_group.tsv" },
+            { "src_domain": 0, "tgt_domain": 1, "encoding": "raw_uint32", "file": "user_group.tsv" }
+        ]
+    }"#;
+
+    fs::write(&manifest_path, manifest_json).expect("Failed to write manifest");
+    fs::write(&user_group_path, "u1\tg1\n").expect("Failed to write user_group TSV");
+
+    let compile_res = commands::compile::run(&manifest_path, &output_snapshot);
+    assert!(compile_res.is_err(), "compile MUST fail when duplicate relations are defined");
+    let err_msg = compile_res.unwrap_err().to_string();
+    assert!(err_msg.contains("Duplicate relation definition"), "Error message MUST indicate duplicate relation: {}", err_msg);
+
+    let _ = fs::remove_dir_all(&test_dir);
+}
