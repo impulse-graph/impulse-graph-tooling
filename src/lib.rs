@@ -2,6 +2,8 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 pub mod commands;
+pub mod parquet_reader;
+
 
 #[derive(Parser)]
 #[command(
@@ -48,16 +50,17 @@ pub enum Commands {
         public_key: Option<PathBuf>,
     },
 
-    /// Compile edge list CSV/TSV/JSON-L data into zero-copy binary snapshot (.imps)
+    /// Compile Parquet/CSV/TSV/JSON-L node and edge data into zero-copy binary snapshot (.imps) or stdout stream
     Compile {
         /// Path to JSON compiler manifest file
         #[arg(short, long, value_name = "MANIFEST")]
         manifest: PathBuf,
 
-        /// Output binary snapshot destination path (.imps)
+        /// Output binary snapshot destination path (.imps or '-' for stdout)
         #[arg(short, long, value_name = "OUTPUT")]
         output: PathBuf,
     },
+
 
     /// Heavy offline snapshot layout optimizer (RCM graph reordering, vector encodings, section stripping)
     Optimize {
