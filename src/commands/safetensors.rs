@@ -1,5 +1,5 @@
-use impulse_graph::spec::{DataType, EncodingType, KeyType};
-use impulse_graph::{PropertyField, SnapshotWriter};
+use impulse_graph::spec::KeyType;
+use impulse_graph::SnapshotWriter;
 use memmap2::MmapOptions;
 use safetensors::SafeTensors;
 use std::error::Error;
@@ -40,7 +40,6 @@ pub fn run(
 
     let mut total_tensors = 0;
     let mut total_bytes: u64 = 0;
-    let mut prop_fields = Vec::new();
 
     for shard in &shard_files {
         println!("  - Ingesting shard file: {}...", shard.display());
@@ -57,18 +56,6 @@ pub fn run(
                 total_bytes += bytes_len;
                 total_tensors += 1;
 
-                let dtype = match tensor.dtype() {
-                    safetensors::Dtype::F32 => DataType::Float32,
-                    safetensors::Dtype::F16 => DataType::Float16,
-                    safetensors::Dtype::BF16 => DataType::Float16,
-                    safetensors::Dtype::I32 => DataType::Int32,
-                    safetensors::Dtype::I64 => DataType::Int64,
-                    safetensors::Dtype::U8 => DataType::Uint8,
-                    safetensors::Dtype::I8 => DataType::Int8,
-                    safetensors::Dtype::BOOL => DataType::Bool8,
-                    _ => DataType::Float32,
-                };
-
                 println!(
                     "      tensor '{}': shape={:?}, dtype={:?}, bytes={:.2} MB",
                     name,
@@ -76,21 +63,12 @@ pub fn run(
                     tensor.dtype(),
                     bytes_len as f64 / (1024.0 * 1024.0)
                 );
-
-                prop_fields.push(PropertyField {
-                    name: name.to_string(),
-                    data_type: dtype,
-                    data: data_bytes,
-                });
             }
         }
     }
 
     let mut writer = SnapshotWriter::new(output_path.to_str().unwrap());
-    writer.add_domain(0, KeyType::String, domain_name, total_tensors as u64);
-
-    // Add fixed node properties (SoA mode)
-    writer.add_domain_fixed_props(0, true, prop_fields);
+    writer.add_domain(0, KeyType::String, domain_name);
 
     // Baseline self-relation table
     let row_offsets = vec![0u32; total_tensors + 1];
@@ -98,7 +76,6 @@ pub fn run(
     writer.add_relation(
         0,
         0,
-        EncodingType::RawUint32,
         total_tensors as u64,
         0,
         row_offsets,

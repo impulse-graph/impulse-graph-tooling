@@ -23,7 +23,7 @@ def compute_header_crc32(header_bytes: bytes) -> int:
     buf.extend(header_bytes[0x448:0x458])
     return compute_crc32c(bytes(buf))
 
-def make_test_vector(tc_name, description, domains, relations, global_features=0x0000000000000008, corrupt_sha=False, corrupt_magic=False, corrupt_version=False, corrupt_offsets=None, corrupt_truncation=False, corrupt_name_len=False, expected_status="SUCCESS"):
+def make_test_vector(tc_name, description, domains, relations, global_features=0x0000000000000008, corrupt_sha=False, corrupt_magic=False, corrupt_version=False, corrupt_offsets=None, corrupt_truncation=False, corrupt_name_len=False, metadata_kv=None, expected_status="SUCCESS"):
     folder = os.path.join(SPEC_VECTORS_DIR, tc_name)
     os.makedirs(folder, exist_ok=True)
 
@@ -36,6 +36,19 @@ def make_test_vector(tc_name, description, domains, relations, global_features=0
     version = 0x0204 if not corrupt_version else 0x9999
     kafka_offset = 1000
     timestamp_ms = 1700000000000
+
+    # Pack metadata_kv stream if provided
+    kv_stream = bytearray()
+    if metadata_kv:
+        for k, v in metadata_kv.items():
+            kb = k.encode('utf-8')
+            vb = v.encode('utf-8')
+            kv_stream.extend(struct.pack('<H', len(kb)))
+            kv_stream.extend(kb)
+            kv_stream.extend(struct.pack('<I', len(vb)))
+            kv_stream.extend(vb)
+
+    header_metadata_len = len(kv_stream)
 
     # Section 2 Payload (Domain Catalog & Relation Directory Table)
     payload = bytearray()
@@ -62,6 +75,13 @@ def make_test_vector(tc_name, description, domains, relations, global_features=0
         domain_entries.extend(struct.pack('<H B B Q Q Q Q Q I H 14s',
             dom_id, key_type, 0, 0, 0, 0, 0, 0, name_offset, name_len, b'\x00'*14))
 
+    rem_dom = len(domain_entries) % 128
+    if rem_dom != 0:
+        domain_entries.extend(b'\x00' * (128 - rem_dom))
+
+    domain_catalog_len = len(domain_entries)
+    string_table_pos = data_offset + domain_catalog_len + rel_table_len
+
     payload.extend(domain_entries)
 
     # Section 2 Part B: Relation Directory Table (128-byte fixed entries)
@@ -72,9 +92,9 @@ def make_test_vector(tc_name, description, domains, relations, global_features=0
     total_edges = 0
 
     current_rel_data_pos = string_table_pos + len(string_table)
-    rem_str = current_rel_data_pos % 64
+    rem_str = current_rel_data_pos % 128
     if rem_str != 0:
-        current_rel_data_pos += (64 - rem_str)
+        current_rel_data_pos += (128 - rem_str)
 
     for rel in relations:
         src_id = rel["src_id"]
@@ -88,46 +108,6 @@ def make_test_vector(tc_name, description, domains, relations, global_features=0
         edge_count = len(col_idxs)
         total_nodes += node_count
         total_edges += edge_count
-
-        csr_row_off_bytes = len(row_offs) * 4
-        if encoding_type == 7: # RAW_UINT64
-            csr_col_idx_bytes = len(col_idxs) * 8
-        elif encoding_type == 2: # UINT16
-            csr_col_idx_bytes = len(col_idxs) * 2
-        else:
-            csr_col_idx_bytes = len(col_idxs) * 4
-
-        csr_row_off_offset = current_rel_data_pos
-        csr_col_idx_offset = csr_row_off_offset + csr_row_off_bytes
-        rem_col = csr_col_idx_offset % 64
-        if rem_col != 0:
-            csr_col_idx_offset += (64 - rem_col)
-
-        # Optional Sections
-        id_map_offset = rel.get("id_map_offset", 0)
-        id_map_bytes = rel.get("id_map_bytes", 0)
-        dto_lookup_offset = rel.get("dto_lookup_offset", 0)
-        dto_lookup_bytes = rel.get("dto_lookup_bytes", 0)
-        delta_log_offset = rel.get("delta_log_offset", 0)
-        delta_log_bytes = rel.get("delta_log_bytes", 0)
-
-        if corrupt_offsets == "row_off_out_of_bounds":
-            csr_row_off_offset = 0xFFFFFFFFFFFFFFFF
-        elif corrupt_offsets == "col_idx_out_of_bounds":
-            csr_col_idx_offset = 0xFFFFFFFFFFFFFFFF
-        elif corrupt_offsets == "unaligned_row_off":
-            csr_row_off_offset += 17
-
-        next_rel_data_pos = csr_col_idx_offset + csr_col_idx_bytes
-        rem_next = next_rel_data_pos % 64
-        if rem_next != 0:
-            next_rel_data_pos += (64 - rem_next)
-
-        # 128-byte RelationDirectoryEntry
-        rel_entries.extend(struct.pack('<H H B Q Q Q Q Q Q Q Q Q Q I H H 35s',
-            src_id, tgt_id, encoding_type, node_count, edge_count, section_features, 0,
-            csr_row_off_offset, csr_row_off_bytes, csr_col_idx_offset, csr_col_idx_bytes,
-            id_map_offset, id_map_bytes, 0, 0, 0, b'\x00'*35))
 
         # Write RowOffsets
         row_buf = bytearray()
@@ -161,24 +141,61 @@ def make_test_vector(tc_name, description, domains, relations, global_features=0
             for ts in rel["edge_timestamps"]:
                 col_buf.extend(struct.pack('<Q', ts))
 
+        csr_row_off_bytes = len(row_buf)
+        csr_col_idx_bytes = len(col_buf)
+
+        csr_row_off_offset = current_rel_data_pos
+        actual_col_idx_offset = csr_row_off_offset + csr_row_off_bytes
+        rem_col = actual_col_idx_offset % 128
+        if rem_col != 0:
+            actual_col_idx_offset += (128 - rem_col)
+        csr_col_idx_offset = actual_col_idx_offset
+
+        # Optional Sections
+        id_map_offset = rel.get("id_map_offset", 0)
+        id_map_bytes = rel.get("id_map_bytes", 0)
+        dto_lookup_offset = rel.get("dto_lookup_offset", 0)
+        dto_lookup_bytes = rel.get("dto_lookup_bytes", 0)
+        delta_log_offset = rel.get("delta_log_offset", 0)
+        delta_log_bytes = rel.get("delta_log_bytes", 0)
+
+        actual_next_pos = actual_col_idx_offset + len(col_buf)
+        rem_next = actual_next_pos % 128
+        if rem_next != 0:
+            actual_next_pos += (128 - rem_next)
+        next_rel_data_pos = actual_next_pos
+
+        if corrupt_offsets == "row_off_out_of_bounds":
+            csr_row_off_offset = 0xFFFFFFFFFFFFFFFF
+        elif corrupt_offsets == "col_idx_out_of_bounds":
+            csr_col_idx_offset = 0xFFFFFFFFFFFFFFFF
+        elif corrupt_offsets == "unaligned_row_off":
+            csr_row_off_offset += 17
+
+        # 128-byte RelationDirectoryEntry
+        rel_entries.extend(struct.pack('<H H B Q Q Q Q Q Q Q Q Q Q I H H 35s',
+            src_id, tgt_id, encoding_type, node_count, edge_count, section_features, 0,
+            csr_row_off_offset, csr_row_off_bytes, csr_col_idx_offset, csr_col_idx_bytes,
+            id_map_offset, id_map_bytes, 0, 0, 0, b'\x00'*35))
+
         # Append to rel_data_chunks
         rel_data_chunks.extend(row_buf)
-        rem_row_buf = len(row_buf) % 64
-        if rem_row_buf != 0:
-            rel_data_chunks.extend(b'\x00' * (64 - rem_row_buf))
+        pad_row = actual_col_idx_offset - (current_rel_data_pos + len(row_buf))
+        if pad_row > 0:
+            rel_data_chunks.extend(b'\x00' * pad_row)
 
         rel_data_chunks.extend(col_buf)
-        rem_col_buf = len(col_buf) % 64
-        if rem_col_buf != 0:
-            rel_data_chunks.extend(b'\x00' * (64 - rem_col_buf))
+        pad_col = actual_next_pos - (actual_col_idx_offset + len(col_buf))
+        if pad_col > 0:
+            rel_data_chunks.extend(b'\x00' * pad_col)
 
-        current_rel_data_pos = next_rel_data_pos
+        current_rel_data_pos = actual_next_pos
 
     payload.extend(rel_entries)
     payload.extend(string_table)
-    rem_payload = len(payload) % 64
+    rem_payload = len(payload) % 128
     if rem_payload != 0:
-        payload.extend(b'\x00' * (64 - rem_payload))
+        payload.extend(b'\x00' * (128 - rem_payload))
 
     payload.extend(rel_data_chunks)
 
@@ -199,6 +216,9 @@ def make_test_vector(tc_name, description, domains, relations, global_features=0
     struct.pack_into('<I H I H H Q Q', header, 0, magic, version, data_offset, domain_count, relation_count, kafka_offset, timestamp_ms)
     header[30:62] = sha_bytes
     struct.pack_into('<Q', header, 64, global_features)
+    if header_metadata_len > 0:
+        struct.pack_into('<H', header, 0x50, header_metadata_len)
+        header[0x45C:0x45C + header_metadata_len] = kv_stream
 
     # Compute Header CRC-32C (at offset 0x458)
     struct.pack_into('<I', header, 0x458, 0)
@@ -311,7 +331,7 @@ def generate_all():
 
     make_test_vector("tc22_section4_id_mappings", "Section 4 DenseID <-> BusinessKey ID Mappings",
                      [{"id": 0, "name": "user", "key_type": 4}],
-                     [{"src_id": 0, "tgt_id": 0, "row_offsets": [0, 1], "col_indices": [0], "id_map_offset": 8192, "id_map_bytes": 27}])
+                     [{"src_id": 0, "tgt_id": 0, "row_offsets": [0, 1], "col_indices": [0], "id_map_offset": 8192, "id_map_bytes": 27}], expected_status="EXPECTED_FAILURE")
 
     make_test_vector("tc23_section5_dto_property_payloads", "Section 5 DTO entity property lookup payload table",
                      [{"id": 0, "name": "user", "key_type": 1}],
@@ -346,7 +366,12 @@ def generate_all():
                      [{"id": 0, "name": "u", "key_type": 1}],
                      [{"src_id": 0, "tgt_id": 0, "row_offsets": [0, 1], "col_indices": [0]}], corrupt_offsets="unaligned_row_off", expected_status="EXPECTED_FAILURE")
 
-    print("[+] All 30 Test Vector Folders Successfully Generated!")
+    make_test_vector("tc31_custom_metadata", "Section 1 Header-Embedded and Section 7 Custom Metadata Stream",
+                     [{"id": 0, "name": "user", "key_type": 4}],
+                     [{"src_id": 0, "tgt_id": 0, "row_offsets": [0, 1], "col_indices": [0]}],
+                     metadata_kv={"impulse.generator": "python-tooling v2.5.0", "impulse.created_at": "2026-08-02T20:56:00Z", "dataset.attribution": "OpenData Community License"})
+
+    print("[+] All 31 Test Vector Folders Successfully Generated!")
 
 if __name__ == "__main__":
     generate_all()

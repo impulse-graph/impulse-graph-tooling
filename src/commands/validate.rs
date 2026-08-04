@@ -56,16 +56,125 @@ pub fn run(
         }
     }
 
-    // 3. Topology & CSR Integrity
+    // 3. Topology & CSR Integrity & 128-Byte Array Alignment Checks
     let mut seen_rel_pairs = std::collections::HashSet::new();
+    let mut prev_pair: Option<(u16, u16)> = None;
+
     for (idx, rel) in reader.relations().iter().enumerate() {
-        if !seen_rel_pairs.insert((rel.src_domain_id, rel.tgt_domain_id)) {
+        // Primary sort SrcDomainID, Secondary sort TgtDomainID
+        let current_pair = (rel.src_domain_id, rel.tgt_domain_id);
+        if let Some(prev) = prev_pair {
+            if current_pair < prev {
+                return Err(format!(
+                    "Relation Directory Table out of order at index #{}: pair ({}, {}) appears after ({}, {})",
+                    idx, current_pair.0, current_pair.1, prev.0, prev.1
+                ).into());
+            }
+        }
+        prev_pair = Some(current_pair);
+
+        if !seen_rel_pairs.insert(current_pair) {
             return Err(format!(
                 "Duplicate relation descriptor detected in catalog for SrcDomain {} -> TgtDomain {} at relation index #{}",
                 rel.src_domain_id, rel.tgt_domain_id, idx
             )
             .into());
         }
+
+        // Validate 128-byte array alignment and bounds for CSR row_offsets
+        if rel.csr_row_off_offset > 0 {
+            if rel.csr_row_off_offset % 128 != 0 {
+                return Err(format!(
+                    "Relation #{}: CSR row offsets offset 0x{:X} is not 128-byte aligned",
+                    idx, rel.csr_row_off_offset
+                ).into());
+            }
+            if rel.csr_row_off_offset + rel.csr_row_off_bytes > file_len {
+                return Err(format!(
+                    "Relation #{}: CSR row offsets end 0x{:X} exceeds file length {}",
+                    idx, rel.csr_row_off_offset + rel.csr_row_off_bytes, file_len
+                ).into());
+            }
+        }
+
+        // Validate 128-byte array alignment and bounds for CSR col_indices
+        if rel.csr_col_idx_offset > 0 {
+            if rel.csr_col_idx_offset % 128 != 0 {
+                return Err(format!(
+                    "Relation #{}: CSR column indices offset 0x{:X} is not 128-byte aligned",
+                    idx, rel.csr_col_idx_offset
+                ).into());
+            }
+            if rel.csr_col_idx_offset + rel.csr_col_idx_bytes > file_len {
+                return Err(format!(
+                    "Relation #{}: CSR column indices end 0x{:X} exceeds file length {}",
+                    idx, rel.csr_col_idx_offset + rel.csr_col_idx_bytes, file_len
+                ).into());
+            }
+        }
+
+        // Validate 128-byte array alignment and bounds for CSC transpose arrays if present
+        if rel.csc_row_off_offset > 0 {
+            if rel.csc_row_off_offset % 128 != 0 {
+                return Err(format!(
+                    "Relation #{}: CSC row offsets offset 0x{:X} is not 128-byte aligned",
+                    idx, rel.csc_row_off_offset
+                ).into());
+            }
+            if rel.csc_row_off_offset + rel.csc_row_off_bytes > file_len {
+                return Err(format!(
+                    "Relation #{}: CSC row offsets end 0x{:X} exceeds file length {}",
+                    idx, rel.csc_row_off_offset + rel.csc_row_off_bytes, file_len
+                ).into());
+            }
+        }
+        if rel.csc_col_idx_offset > 0 {
+            if rel.csc_col_idx_offset % 128 != 0 {
+                return Err(format!(
+                    "Relation #{}: CSC column indices offset 0x{:X} is not 128-byte aligned",
+                    idx, rel.csc_col_idx_offset
+                ).into());
+            }
+            if rel.csc_col_idx_offset + rel.csc_col_idx_bytes > file_len {
+                return Err(format!(
+                    "Relation #{}: CSC column indices end 0x{:X} exceeds file length {}",
+                    idx, rel.csc_col_idx_offset + rel.csc_col_idx_bytes, file_len
+                ).into());
+            }
+        }
+
+        // Validate Edge Attribute 128-byte alignment and file bounds
+        for (a_idx, attr) in rel.attributes.iter().enumerate() {
+            if attr.data_offset > 0 {
+                if attr.data_offset % 128 != 0 {
+                    return Err(format!(
+                        "Relation #{} Attr #{}: Data offset 0x{:X} is not 128-byte aligned",
+                        idx, a_idx, attr.data_offset
+                    ).into());
+                }
+                if attr.data_offset + attr.data_bytes > file_len {
+                    return Err(format!(
+                        "Relation #{} Attr #{}: Data end 0x{:X} exceeds file length {}",
+                        idx, a_idx, attr.data_offset + attr.data_bytes, file_len
+                    ).into());
+                }
+            }
+            if attr.offsets_offset > 0 {
+                if attr.offsets_offset % 128 != 0 {
+                    return Err(format!(
+                        "Relation #{} Attr #{}: Offsets offset 0x{:X} is not 128-byte aligned",
+                        idx, a_idx, attr.offsets_offset
+                    ).into());
+                }
+                if attr.offsets_offset + attr.offsets_bytes > file_len {
+                    return Err(format!(
+                        "Relation #{} Attr #{}: Offsets end 0x{:X} exceeds file length {}",
+                        idx, a_idx, attr.offsets_offset + attr.offsets_bytes, file_len
+                    ).into());
+                }
+            }
+        }
+
         if rel.node_count > 0 {
             let row_offsets = reader.get_row_offsets(idx)?;
             let col_indices = reader.get_col_indices(idx)?;
@@ -114,7 +223,7 @@ pub fn run(
             }
         }
     }
-    println!("  [OK] CSR Topology offsets monotonicity & target index bounds verified");
+    println!("  [OK] CSR & CSC Topology arrays, SoA attributes 128B alignment & bounds verified");
 
     // 4. Ed25519 Signature Verification
     if let Some(pub_key_path) = public_key {
@@ -135,3 +244,4 @@ pub fn run(
     println!("SUCCESS: Snapshot validation passed cleanly with 0 errors.");
     Ok(())
 }
+

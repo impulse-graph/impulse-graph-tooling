@@ -1,4 +1,4 @@
-use impulse_graph::spec::{EncodingType, KeyType};
+use impulse_graph::spec::KeyType;
 use impulse_graph::SnapshotWriter;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -26,7 +26,7 @@ struct DomainDef {
 struct RelationDef {
     src_domain: u16,
     tgt_domain: u16,
-    encoding: String,
+    encoding: Option<String>,
     file: String,
     include_csc: Option<bool>,
 }
@@ -37,15 +37,6 @@ fn parse_key_type(s: &str) -> KeyType {
         "uint64" | "u64" | "int64" | "i64" => KeyType::Int64,
         "uuid" => KeyType::Uuid,
         _ => KeyType::Int32,
-    }
-}
-
-fn parse_encoding(s: &str) -> EncodingType {
-    match s.to_lowercase().as_str() {
-        "delta_vbyte" => EncodingType::DeltaVbyte,
-        "simdcomp" => EncodingType::SimdComp,
-        "sliced_ellpack" => EncodingType::SlicedEllpack,
-        _ => EncodingType::RawUint32,
     }
 }
 
@@ -78,8 +69,6 @@ pub fn run(manifest_path: &Path, output_path: &Path) -> Result<(), Box<dyn Error
     struct CompiledRelation {
         src_domain: u16,
         tgt_domain: u16,
-        encoding: String,
-        include_csc: bool,
         src_domain_count: u32,
         edges_count: u64,
         row_offsets: Vec<u32>,
@@ -146,8 +135,6 @@ pub fn run(manifest_path: &Path, output_path: &Path) -> Result<(), Box<dyn Error
         compiled_relations.push(CompiledRelation {
             src_domain: r.src_domain,
             tgt_domain: r.tgt_domain,
-            encoding: r.encoding.clone(),
-            include_csc: r.include_csc.unwrap_or(false),
             src_domain_count,
             edges_count: edges.len() as u64,
             row_offsets,
@@ -157,21 +144,18 @@ pub fn run(manifest_path: &Path, output_path: &Path) -> Result<(), Box<dyn Error
 
     // Add domain metadata ONCE to SnapshotWriter
     for d in &manifest.domains {
-        let count = domain_node_maps.get(&d.id).map(|m| m.len() as u64).unwrap_or(0);
-        writer.add_domain(d.id, parse_key_type(&d.key_type), &d.name, count);
+        writer.add_domain(d.id, parse_key_type(&d.key_type), &d.name);
     }
 
     // Add relations to SnapshotWriter
     for cr in compiled_relations {
-        writer.add_relation_with_csc(
+        writer.add_relation(
             cr.src_domain,
             cr.tgt_domain,
-            parse_encoding(&cr.encoding),
             cr.src_domain_count as u64,
             cr.edges_count,
             cr.row_offsets,
             cr.col_indices,
-            cr.include_csc,
         );
     }
 
