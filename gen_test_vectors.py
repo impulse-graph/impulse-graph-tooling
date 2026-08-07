@@ -6,6 +6,17 @@ import hashlib
 
 SPEC_VECTORS_DIR = "/Users/jesse/impulse/impulse-graph-spec/test-vectors"
 
+def crc16(data: bytes) -> int:
+    crc = 0xFFFF
+    for b in data:
+        crc ^= (b << 8)
+        for _ in range(8):
+            if crc & 0x8000:
+                crc = ((crc << 1) ^ 0x1021) & 0xFFFF
+            else:
+                crc = (crc << 1) & 0xFFFF
+    return crc
+
 def compute_crc32c(data: bytes) -> int:
     crc = 0xFFFFFFFF
     for b in data:
@@ -213,17 +224,17 @@ def make_test_vector(tc_name, description, domains, relations, global_features=0
         sha_bytes = bytes([b ^ 0xFF for b in sha_bytes])
 
     header = bytearray(data_offset)
-    struct.pack_into('<I H I H H Q Q', header, 0, magic, version, data_offset, domain_count, relation_count, kafka_offset, timestamp_ms)
-    header[30:62] = sha_bytes
-    struct.pack_into('<Q', header, 64, global_features)
-    if header_metadata_len > 0:
-        struct.pack_into('<H', header, 0x50, header_metadata_len)
-        header[0x45C:0x45C + header_metadata_len] = kv_stream
+    struct.pack_into('<I', header, 0x00, magic)
+    struct.pack_into('<H', header, 0x04, version)
+    struct.pack_into('<I', header, 0x06, data_offset)
+    struct.pack_into('<H', header, 0x0A, domain_count)
+    struct.pack_into('<H', header, 0x0C, relation_count)
+    struct.pack_into('<Q', header, 0x0E, timestamp_ms)
+    struct.pack_into('<Q', header, 0x16, global_features)
 
-    # Compute Header CRC-32C (at offset 0x458)
-    struct.pack_into('<I', header, 0x458, 0)
-    header_crc = compute_header_crc32(header)
-    struct.pack_into('<I', header, 0x458, header_crc)
+    # Compute Header CRC-16 (at offset 0x3E)
+    chk = crc16(bytes(header[0:0x3E]))
+    struct.pack_into('<H', header, 0x3E, chk)
 
     full_snapshot = bytes(header) + bytes(payload)
     if corrupt_truncation:
