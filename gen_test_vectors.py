@@ -33,7 +33,7 @@ def make_test_vector(tc_name, description, domains, relations, global_features=0
 
     # Build Header (4096 bytes)
     magic = 0x494D5053 if not corrupt_magic else 0x00000000
-    version = 0x0204 if not corrupt_version else 0x9999
+    version = 9 if not corrupt_version else 0x9999
     kafka_offset = 1000
     timestamp_ms = 1700000000000
 
