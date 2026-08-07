@@ -23,7 +23,7 @@ def compute_header_crc32(header_bytes: bytes) -> int:
     buf.extend(header_bytes[0x448:0x458])
     return compute_crc32c(bytes(buf))
 
-def make_test_vector(tc_name, description, domains, relations, global_features=0x0000000000000008, corrupt_sha=False, corrupt_magic=False, corrupt_version=False, corrupt_offsets=None, corrupt_truncation=False, corrupt_name_len=False, metadata_kv=None, expected_status="SUCCESS"):
+def make_test_vector(tc_name, description, domains, relations, global_features=0x0000000000000001, corrupt_sha=False, corrupt_magic=False, corrupt_version=False, corrupt_offsets=None, corrupt_truncation=False, corrupt_name_len=False, metadata_kv=None, expected_status="SUCCESS"):
     folder = os.path.join(SPEC_VECTORS_DIR, tc_name)
     os.makedirs(folder, exist_ok=True)
 
