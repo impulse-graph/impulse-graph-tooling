@@ -80,7 +80,12 @@ pub fn run(file: &Path, format: &str, verbose: bool) -> Result<(), Box<dyn Error
     println!("File:              {}", file.display());
     println!("File Size:         {} bytes", metadata.len());
     println!("Magic:             0x{:08X} (IMPS)", header.magic());
-    println!("Version:           0.9.0 (0x{:04X})", header.version());
+    let version_str = if header.version() == 9 {
+        "0.9.0 (0x0009)".to_string()
+    } else {
+        format!("0.9.0 (0x{:04X})", header.version())
+    };
+    println!("Version:           {}", version_str);
     println!("Required Features: {}", format_required_features(header.required_features()));
     println!("Domains:           {}", header.domain_count());
     println!("Relations:         {}", header.relation_count());
