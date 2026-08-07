@@ -166,4 +166,37 @@ pub enum Commands {
         #[arg(short, long, default_value = "tsv")]
         format: String,
     },
+
+    /// Assemble textual assembly (.impas) into binary bytecode program (.impb)
+    Assemble {
+        /// Path to input assembly file (.impas)
+        #[arg(short, long, value_name = "INPUT")]
+        input: PathBuf,
+
+        /// Path to output binary file (.impb)
+        #[arg(short, long, value_name = "OUTPUT")]
+        output: PathBuf,
+    },
+
+    /// Disassemble binary bytecode program (.impb) into annotated text assembly
+    Disassemble {
+        /// Path to input binary file (.impb)
+        #[arg(short, long, value_name = "INPUT")]
+        input: PathBuf,
+    },
+
+    /// Execute compiled bytecode query (.impb) against a binary snapshot (.imps)
+    Run {
+        /// Path to binary snapshot (.imps)
+        #[arg(short, long, value_name = "SNAPSHOT")]
+        snapshot: PathBuf,
+
+        /// Path to compiled bytecode program (.impb)
+        #[arg(short, long, value_name = "BYTECODE")]
+        bytecode: PathBuf,
+
+        /// Integer input parameter (e.g. source root node ID)
+        #[arg(short, long, default_value_t = 0)]
+        input_val: u64,
+    },
 }

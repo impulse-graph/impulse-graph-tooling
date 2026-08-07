@@ -70,6 +70,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } => {
             commands::export::run(&file, &out_dir, &format)?;
         }
+        Commands::Assemble { input, output } => {
+            commands::assemble::run(&input, &output)?;
+        }
+        Commands::Disassemble { input } => {
+            commands::disassemble::run(&input)?;
+        }
+        Commands::Run {
+            snapshot,
+            bytecode,
+            input_val,
+        } => {
+            commands::run::run(&snapshot, &bytecode, input_val)?;
+        }
     }
 
     Ok(())

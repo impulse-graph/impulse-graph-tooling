@@ -7,3 +7,6 @@ pub mod inspect;
 pub mod optimize;
 pub mod safetensors;
 pub mod validate;
+pub mod assemble;
+pub mod disassemble;
+pub mod run;

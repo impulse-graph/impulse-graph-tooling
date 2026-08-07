@@ -1,0 +1,385 @@
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::{BufRead, BufReader, Write};
+use std::path::Path;
+use impulse_graph::ffi::impulse_instruction_t;
+
+fn get_opcode(name: &str) -> Option<u8> {
+    match name {
+        "OP_NOP" => Some(0x00),
+        "OP_INIT_INPUT_NODE" => Some(0x01),
+        "OP_INIT_INPUT_SET" => Some(0x02),
+        "OP_LOAD_CONST_INT" => Some(0x03),
+        "OP_MAP_KEYS_TO_DENSE" => Some(0x04),
+        "OP_LOAD_CONST_FLOAT" => Some(0x05),
+        "OP_LOAD_CONST_STR_PREFIX" => Some(0x06),
+        "OP_CSR_WALK" => Some(0x10),
+        "OP_CSR_WALK_FILTERED" => Some(0x11),
+        "OP_CSR_DEGREE" => Some(0x12),
+        "OP_CSR_WALK_PREDICATE" => Some(0x13),
+        "OP_NODE_FILTER" => Some(0x14),
+        "OP_NODE_FILTER_STR_PREFIX" => Some(0x15),
+        "OP_CSR_WALK_REDUCE_SUM" => Some(0x16),
+        "OP_CSR_WALK_REDUCE" => Some(0x17),
+        "OP_SET_UNION" => Some(0x30),
+        "OP_SET_INTERSECT" => Some(0x31),
+        "OP_SET_DIFFERENCE" => Some(0x32),
+        "OP_SET_CARDINALITY" => Some(0x33),
+        "OP_VECTOR_MUL_ATTR" => Some(0x34),
+        "OP_VECTOR_REDUCE_SUM" => Some(0x35),
+        "OP_VECTOR_DIV" => Some(0x36),
+        "OP_VECTOR_STR_CONCAT" => Some(0x37),
+        "OP_FLOAT_VECTOR_SCALE" => Some(0x38),
+        "OP_L1_NORM_DIFF" => Some(0x39),
+        "OP_CC_AFFOREST" => Some(0x40),
+        "OP_MXV" => Some(0x41),
+        "OP_VXM" => Some(0x42),
+        "OP_EWISE_ADD" => Some(0x43),
+        "OP_EWISE_MULT" => Some(0x44),
+        "OP_REDUCE" => Some(0x45),
+        "OP_CC_HOOK_COMPRESS" => Some(0x46),
+        "OP_TC_SWEEP_BATCH" => Some(0x47),
+        "OP_BRANDES_FORWARD" => Some(0x48),
+        "OP_BRANDES_BACKWARD" => Some(0x49),
+        "OP_DELTA_STEP_RELAX" => Some(0x4A),
+        "OP_READ_EDGE_WEIGHT" => Some(0x4B),
+        "OP_JMP" => Some(0x50),
+        "OP_JZ" => Some(0x51),
+        "OP_JNZ" => Some(0x52),
+        "OP_LOOP_DECR" => Some(0x53),
+        "OP_STABLE_CHECK" => Some(0x54),
+        "OP_CALL" => Some(0x55),
+        "OP_RET" => Some(0x56),
+        "OP_ISLAND_DETECT" => Some(0x65),
+        "OP_MOV" => Some(0x70),
+        "OP_CLEAR_REG" => Some(0x71),
+        "OP_COLLECT_BITSET" => Some(0x90),
+        "OP_COLLECT_ARRAY" => Some(0x91),
+        "OP_MAP_DENSE_TO_KEYS" => Some(0x92),
+        "OP_COLLECT_VALUE_MAP" => Some(0x93),
+        "OP_HALT" => Some(0xFF),
+        _ => None,
+    }
+}
+
+pub fn run(input_path: &Path, output_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let file = File::open(input_path)?;
+    let reader = BufReader::new(file);
+
+    let mut symbols: HashMap<String, u32> = HashMap::new();
+    let mut labels: HashMap<String, usize> = HashMap::new();
+    
+    struct RawInstruction {
+        opcode_str: String,
+        flags_str: String,
+        dst_str: String,
+        payload_str: String,
+        line_num: usize,
+    }
+
+    let mut raw_program: Vec<RawInstruction> = Vec::new();
+    let mut pc = 0;
+
+    for (idx, line_res) in reader.lines().enumerate() {
+        let line_num = idx + 1;
+        let line = line_res?;
+        let trimmed = line.trim();
+        
+        // Skip comments and empty lines
+        if trimmed.is_empty() || trimmed.starts_with(';') {
+            continue;
+        }
+
+        // Strip inline comments
+        let clean_line = match trimmed.split_once(';') {
+            Some((code, _)) => code.trim(),
+            None => trimmed,
+        };
+
+        // Parse Directives
+        if clean_line.starts_with('.') {
+            let parts: Vec<&str> = clean_line.split_whitespace().collect();
+            if parts.len() >= 4 && parts[2] == "=" {
+                let directive = parts[0];
+                let symbol_name = parts[1].replace('"', "");
+                let value_str = parts[3].trim_end_matches(',');
+                let value = value_str.parse::<u32>()?;
+                
+                match directive {
+                    ".domain" => {
+                        symbols.insert(format!("DOMAIN_{}", symbol_name.to_uppercase()), value);
+                        symbols.insert(symbol_name.clone(), value);
+                    }
+                    ".relation" => {
+                        symbols.insert(format!("REL_{}", symbol_name.to_uppercase()), value);
+                        symbols.insert(symbol_name.clone(), value);
+                    }
+                    ".attribute" => {
+                        symbols.insert(format!("ATTR_{}", symbol_name.to_uppercase()), value);
+                        symbols.insert(symbol_name.clone(), value);
+                    }
+                    _ => return Err(format!("Unknown directive {} at line {}", directive, line_num).into()),
+                }
+            }
+            continue;
+        }
+
+        // Check for Label definition (e.g. "loop_start:")
+        let mut instr_text = clean_line;
+        if let Some((label_name, remaining)) = clean_line.split_once(':') {
+            let label = label_name.trim().to_string();
+            labels.insert(label, pc);
+            instr_text = remaining.trim();
+            if instr_text.is_empty() {
+                continue; // line had only a label
+            }
+        }
+
+        // Parse Instruction
+        // Example: OP_CSR_WALK R4, R0, REL_0
+        // Or: 0x00: OP_CSR_WALK R4, R0, REL_0 (strip PC prefix if present)
+        if let Some((first, second)) = instr_text.split_once(':') {
+            if first.trim().starts_with("0x") {
+                instr_text = second.trim();
+            }
+        }
+
+        let parts: Vec<&str> = instr_text.split_whitespace().collect();
+        if parts.is_empty() {
+            continue;
+        }
+
+        let opcode_str = parts[0].to_string();
+        
+        // Parse operands
+        let args_str = parts[1..].join(" ");
+        let args: Vec<&str> = args_str.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+
+        let mut flags_str = "0".to_string();
+        let mut dst_str = "0".to_string();
+        let mut payload_str = "0".to_string();
+
+        match args.len() {
+            0 => {}
+            1 => {
+                // E.g. OP_HALT or OP_JMP label
+                payload_str = args[0].to_string();
+            }
+            2 => {
+                // E.g. OP_INIT_INPUT_NODE R0, 0
+                // Or OP_COLLECT_BITSET R63, R5
+                dst_str = args[0].to_string();
+                payload_str = args[1].to_string();
+            }
+            3 => {
+                // E.g. OP_CSR_WALK R4, R0, REL_0
+                // Or OP_EWISE_ADD R5, R4, R3 (which is OP_EWISE_ADD dst_reg, src1, src2)
+                dst_str = args[0].to_string();
+                
+                // Let's pack the src operands/relations/constants into payload
+                // If it is a standard GraphBLAS or walk instruction:
+                // We will parse them and pack them during Pass 2, so keep them joined here
+                flags_str = "0".to_string();
+                payload_str = format!("{} | {}", args[1], args[2]);
+            }
+            4 => {
+                // E.g. OP_EWISE_ADD R4, R1, R2, BINARY_OP_ADD
+                dst_str = args[0].to_string();
+                payload_str = format!("{} | {} | {}", args[1], args[2], args[3]);
+            }
+            _ => return Err(format!("Invalid number of arguments in: {} at line {}", instr_text, line_num).into()),
+        }
+
+        raw_program.push(RawInstruction {
+            opcode_str,
+            flags_str,
+            dst_str,
+            payload_str,
+            line_num,
+        });
+        pc += 1;
+    }
+
+    // Pass 2: Binary Generation & Label Patching
+    let mut compiled_bytes: Vec<u8> = Vec::new();
+
+    for (current_pc, raw) in raw_program.iter().enumerate() {
+        let opcode = get_opcode(&raw.opcode_str).ok_or_else(|| {
+            format!("Invalid opcode: {} at line {}", raw.opcode_str, raw.line_num)
+        })?;
+
+        let flags = parse_flags(&raw.flags_str)?;
+        let dst_reg = parse_register(&raw.dst_str)?;
+        let payload = parse_payload(&raw.payload_str, current_pc, &labels, &symbols)?;
+
+        let instr = impulse_instruction_t {
+            opcode,
+            flags,
+            dst_reg,
+            payload,
+        };
+
+        let ptr = &instr as *const impulse_instruction_t as *const u8;
+        let slice = unsafe { std::slice::from_raw_parts(ptr, 8) };
+        compiled_bytes.extend_from_slice(slice);
+    }
+
+    let mut out_file = File::create(output_path)?;
+    out_file.write_all(&compiled_bytes)?;
+    println!("Assembled successfully: {} instructions -> {:?}", raw_program.len(), output_path);
+    Ok(())
+}
+
+fn is_register_str(s: &str) -> bool {
+    let trimmed = s.trim().to_uppercase();
+    if trimmed.starts_with('R') {
+        let num_str = &trimmed[1..];
+        !num_str.is_empty() && num_str.chars().all(|c| c.is_ascii_digit())
+    } else {
+        trimmed.parse::<u16>().is_ok()
+    }
+}
+
+fn parse_register(s: &str) -> Result<u16, Box<dyn std::error::Error>> {
+    let trimmed = s.trim().to_uppercase();
+    if trimmed.is_empty() {
+        return Ok(0);
+    }
+    if trimmed.starts_with('R') {
+        let num_str = &trimmed[1..];
+        if num_str.chars().all(|c| c.is_ascii_digit()) {
+            if let Ok(reg) = num_str.parse::<u16>() {
+                if reg < 64 {
+                    return Ok(reg);
+                }
+            }
+        }
+    }
+    // Also support raw integers
+    if let Ok(reg) = trimmed.parse::<u16>() {
+        if reg < 64 {
+            return Ok(reg);
+        }
+    }
+    Err(format!("Invalid register identifier: {}", s).into())
+}
+
+fn parse_flags(s: &str) -> Result<u8, Box<dyn std::error::Error>> {
+    let trimmed = s.trim().to_uppercase();
+    if trimmed.is_empty() {
+        return Ok(0);
+    }
+    let mut val = 0u8;
+    for part in trimmed.split('|').map(|x| x.trim()) {
+        match part {
+            "FLAG_MODE_BITSET" | "BITSET" => val |= 0x01,
+            "FLAG_ACCUMULATE" | "ACCUMULATE" => val |= 0x02,
+            "FLAG_INVERT" | "INVERT" => val |= 0x04,
+            "FLAG_OFFHEAP" | "OFFHEAP" => val |= 0x08,
+            _ => {
+                if let Ok(num) = part.parse::<u8>() {
+                    val |= num;
+                } else if !part.is_empty() {
+                    return Err(format!("Invalid flag value: {}", part).into());
+                }
+            }
+        }
+    }
+    Ok(val)
+}
+
+fn parse_payload(
+    s: &str,
+    current_pc: usize,
+    labels: &HashMap<String, usize>,
+    symbols: &HashMap<String, u32>,
+) -> Result<u32, Box<dyn std::error::Error>> {
+    let parts: Vec<&str> = s.split('|').map(|x| x.trim()).collect();
+    
+    if parts.len() == 1 {
+        let trimmed = parts[0];
+        // Check if label
+        if let Some(&target_pc) = labels.get(trimmed) {
+            let offset = (target_pc as i32) - (current_pc as i32);
+            return Ok(offset as u32);
+        }
+        // Check if custom symbol
+        if let Some(&val) = symbols.get(trimmed) {
+            return Ok(val);
+        }
+        // Check if register
+        if is_register_str(trimmed) {
+            return Ok(parse_register(trimmed)? as u32);
+        }
+        // Check float
+        if trimmed.ends_with('f') || trimmed.contains('.') {
+            let clean = trimmed.trim_end_matches('f');
+            if let Ok(fval) = clean.parse::<f32>() {
+                return Ok(fval.to_bits());
+            }
+        }
+        // Check integer
+        if let Ok(ival) = trimmed.parse::<i32>() {
+            return Ok(ival as u32);
+        }
+        // Semiring/Operator constant lookups
+        if let Some(val) = lookup_constant(trimmed) {
+            return Ok(val);
+        }
+        return Err(format!("Unresolved payload element: {}", trimmed).into());
+    }
+
+    // Packing multiple arguments (e.g. "R1 | R2" or "R0 | REL_0" or "R1 | R2 | BINARY_OP_ADD")
+    let mut packed = 0u32;
+    for (i, part) in parts.iter().enumerate() {
+        let val = if is_register_str(part) {
+            parse_register(part)? as u32
+        } else if let Some(&v) = symbols.get(*part) {
+            v
+        } else if let Some(v) = lookup_constant(part) {
+            v
+        } else {
+            part.parse::<u32>().map_err(|_| format!("Invalid integer inside packed payload: {}", part))?
+        };
+
+        if i == 0 {
+            packed |= val & 0xFFFF; // lower 16 bits
+        } else if i == 1 {
+            packed |= (val & 0xFFFF) << 16; // upper 16 bits
+        } else if i == 2 {
+            // For 3-operand packing, clear the second operand to fit u8:
+            // e.g. R4, R1 | R2 | BINARY_OP_ADD
+            // Let's pack as: src1 (byte 0), src2 (byte 1), op_id (byte 2)
+            // Clear previous pack and write byte structure:
+            if parts.len() >= 3 {
+                let src1 = parse_register(parts[0])? as u32;
+                let src2 = parse_register(parts[1])? as u32;
+                let op_id = if let Some(v) = lookup_constant(parts[2]) {
+                    v
+                } else if let Some(&v) = symbols.get(parts[2]) {
+                    v
+                } else {
+                    parts[2].parse::<u32>()?
+                };
+                return Ok(src1 | (src2 << 8) | (op_id << 16));
+            }
+        }
+    }
+    Ok(packed)
+}
+
+fn lookup_constant(s: &str) -> Option<u32> {
+    match s.trim().to_uppercase().as_str() {
+        "SEMIRING_PLUS_TIMES" => Some(0),
+        "SEMIRING_MIN_PLUS" => Some(1),
+        "SEMIRING_MAX_MIN" => Some(2),
+        "SEMIRING_BOOL" => Some(3),
+        "BINARY_OP_ADD" => Some(0),
+        "BINARY_OP_MUL" => Some(1),
+        "BINARY_OP_MIN" => Some(2),
+        "BINARY_OP_MAX" => Some(3),
+        "BINARY_OP_AND" => Some(4),
+        "BINARY_OP_OR" => Some(5),
+        _ => None,
+    }
+}
