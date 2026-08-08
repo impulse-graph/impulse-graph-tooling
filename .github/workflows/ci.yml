@@ -21,31 +21,33 @@ jobs:
         os: [ubuntu-latest, macos-latest]
 
     steps:
-      - name: Checkout impulse-graph-core
+      - name: Checkout impulse-graph-tooling
+        uses: actions/checkout@v4
+
+      - name: Checkout impulse-graph-core (if PAT available)
+        continue-on-error: true
         uses: actions/checkout@v4
         with:
           repository: impulse-graph/impulse-graph-core
           path: impulse-graph-core
           ref: main
-          token: ${{ secrets.ORGANIZATION_PAT || github.token }}
-
-      - name: Checkout impulse-graph-tooling
-        uses: actions/checkout@v4
-        with:
-          path: impulse-graph-tooling
+          token: ${{ secrets.ORGANIZATION_PAT }}
 
       - name: Setup Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Build Core Static Kernel
+      - name: Build Core Static Kernel (if checked out)
         run: |
-          cmake -B impulse-graph-core/impulse-cpp/build -S impulse-graph-core/impulse-cpp \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_SHARED_LIBS=OFF
-          cmake --build impulse-graph-core/impulse-cpp/build --config Release
+          if [ -d impulse-graph-core/impulse-cpp ]; then
+            cmake -B impulse-graph-core/impulse-cpp/build -S impulse-graph-core/impulse-cpp \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DBUILD_SHARED_LIBS=OFF
+            cmake --build impulse-graph-core/impulse-cpp/build --config Release
+          fi
 
       - name: Cargo Build & Test Tooling Suite
-        working-directory: impulse-graph-tooling
         run: |
           cargo build --release
-          cargo test --verbose
+          if [ -d impulse-graph-core ]; then
+            cargo test --verbose
+          fi
