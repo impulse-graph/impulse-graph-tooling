@@ -20,12 +20,16 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
 
+    env:
+      HAS_PAT: ${{ secrets.ORGANIZATION_PAT }}
+
     steps:
       - name: Checkout impulse-graph-tooling
         uses: actions/checkout@v4
 
       - name: Checkout impulse-graph-core (if PAT available)
         continue-on-error: true
+        if: env.HAS_PAT != ''
         uses: actions/checkout@v4
         with:
           repository: impulse-graph/impulse-graph-core
