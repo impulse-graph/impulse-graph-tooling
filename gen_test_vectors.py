@@ -323,7 +323,7 @@ def generate_all():
     make_test_vector("tc15_keytype_int64", "Section 4 64-bit integer keys", [{"id": 0, "name": "user", "key_type": 2}], [{"src_id": 0, "tgt_id": 0, "row_offsets": [0, 1], "col_indices": [0]}])
 
     # Alignment & Failures
-    make_test_vector("tc16_4kb_page_aligned_v2_4", "Strict 4KB OS page aligned header baseline", [{"id": 0, "name": "u", "key_type": 1}], [{"src_id": 0, "tgt_id": 0, "row_offsets": [0, 1], "col_indices": [0]}])
+    make_test_vector("tc16_4kb_page_aligned", "Strict 4KB OS page aligned header baseline", [{"id": 0, "name": "u", "key_type": 1}], [{"src_id": 0, "tgt_id": 0, "row_offsets": [0, 1], "col_indices": [0]}])
     make_test_vector("tc17_invalid_sha256_corruption", "Mutated payload triggering SHA-256 mismatch", [{"id": 0, "name": "u", "key_type": 1}], [{"src_id": 0, "tgt_id": 0, "row_offsets": [0, 1], "col_indices": [0]}], corrupt_sha=True, expected_status="EXPECTED_FAILURE")
     make_test_vector("tc18_unsupported_global_feature", "Reserved global feature bit set", [{"id": 0, "name": "u", "key_type": 1}], [{"src_id": 0, "tgt_id": 0, "row_offsets": [0, 1], "col_indices": [0]}], global_features=0x8000000000000000, expected_status="EXPECTED_FAILURE")
 
