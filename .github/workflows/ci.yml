@@ -27,14 +27,12 @@ jobs:
           repository: impulse-graph/impulse-graph-core
           path: impulse-graph-core
           ref: main
+          token: ${{ secrets.ORGANIZATION_PAT || github.token }}
 
       - name: Checkout impulse-graph-tooling
         uses: actions/checkout@v4
         with:
           path: impulse-graph-tooling
-
-      - name: Setup CMake & Ninja
-        uses: ninja-build/setup-ninja@v5
 
       - name: Setup Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
