@@ -34,7 +34,7 @@ jobs:
           path: impulse-graph-tooling
 
       - name: Setup CMake & Ninja
-        uses: jtimon/setup-ninja-action@v1
+        uses: ninja-build/setup-ninja@v5
 
       - name: Setup Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
