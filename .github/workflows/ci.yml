@@ -1,0 +1,53 @@
+name: Impulse Graph Tooling CI
+
+on:
+  push:
+    branches: [ main, dev ]
+  pull_request:
+    branches: [ main ]
+  repository_dispatch:
+    types: [ core-updated ]
+
+permissions:
+  contents: read
+
+jobs:
+  build-tooling-suite:
+    name: Build & Test Tooling Suite (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout impulse-graph-core
+        uses: actions/checkout@v4
+        with:
+          repository: impulse-graph/impulse-graph-core
+          path: impulse-graph-core
+          ref: main
+
+      - name: Checkout impulse-graph-tooling
+        uses: actions/checkout@v4
+        with:
+          path: impulse-graph-tooling
+
+      - name: Setup CMake & Ninja
+        uses: jtimon/setup-ninja-action@v1
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Core Static Kernel
+        run: |
+          cmake -B impulse-graph-core/impulse-cpp/build -S impulse-graph-core/impulse-cpp \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=OFF
+          cmake --build impulse-graph-core/impulse-cpp/build --config Release
+
+      - name: Cargo Build & Test Tooling Suite
+        working-directory: impulse-graph-tooling
+        run: |
+          cargo build --release
+          cargo test --verbose
