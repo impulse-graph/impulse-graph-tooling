@@ -51,7 +51,7 @@ fn test_parquet_compile_nodes_edges_attributes() {
 
     // 3. Write manifest.json
     let manifest_json = r#"{
-        "version": "2.4.0",
+        "version": "0.9.0",
         "domains": [
             {
                 "id": 0,

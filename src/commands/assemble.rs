@@ -51,8 +51,13 @@ fn get_opcode(name: &str) -> Option<u8> {
         "OP_CALL" => Some(0x55),
         "OP_RET" => Some(0x56),
         "OP_ISLAND_DETECT" => Some(0x65),
-        "OP_MOV" => Some(0x70),
+        "OP_MOV" | "OP_MOVE" => Some(0x70),
         "OP_CLEAR_REG" => Some(0x71),
+        "OP_ENTER_FRAME" => Some(0x72),
+        "OP_LEAVE_FRAME" => Some(0x73),
+        "OP_ROARING_BITMAP_OR" => Some(0x30),
+        "OP_ROARING_BITMAP_AND" => Some(0x31),
+        "OP_ROARING_BITMAP_AND_NOT" => Some(0x32),
         "OP_COLLECT_BITSET" => Some(0x90),
         "OP_COLLECT_ARRAY" => Some(0x91),
         "OP_MAP_DENSE_TO_KEYS" => Some(0x92),
@@ -288,6 +293,32 @@ fn parse_flags(s: &str) -> Result<u8, Box<dyn std::error::Error>> {
     Ok(val)
 }
 
+fn resolve_single_val(
+    part: &str,
+    symbols: &HashMap<String, u32>,
+) -> Result<u32, Box<dyn std::error::Error>> {
+    let trimmed = part.trim();
+    if is_register_str(trimmed) {
+        return parse_register(trimmed).map(|r| r as u32);
+    }
+    if let Some(&v) = symbols.get(trimmed) {
+        return Ok(v);
+    }
+    if let Some(v) = lookup_constant(trimmed) {
+        return Ok(v);
+    }
+    if trimmed.starts_with("REL_") || trimmed.starts_with("DOMAIN_") || trimmed.starts_with("ATTR_") {
+        let suffix = trimmed
+            .trim_start_matches("REL_")
+            .trim_start_matches("DOMAIN_")
+            .trim_start_matches("ATTR_");
+        return Ok(suffix.parse::<u32>().unwrap_or(0));
+    }
+    trimmed
+        .parse::<u32>()
+        .map_err(|_| format!("Invalid integer inside payload operand: {}", trimmed).into())
+}
+
 fn parse_payload(
     s: &str,
     current_pc: usize,
@@ -295,74 +326,30 @@ fn parse_payload(
     symbols: &HashMap<String, u32>,
 ) -> Result<u32, Box<dyn std::error::Error>> {
     let parts: Vec<&str> = s.split('|').map(|x| x.trim()).collect();
-    
+
     if parts.len() == 1 {
         let trimmed = parts[0];
-        // Check if label
         if let Some(&target_pc) = labels.get(trimmed) {
             let offset = (target_pc as i32) - (current_pc as i32);
             return Ok(offset as u32);
         }
-        // Check if custom symbol
-        if let Some(&val) = symbols.get(trimmed) {
-            return Ok(val);
-        }
-        // Check if register
-        if is_register_str(trimmed) {
-            return Ok(parse_register(trimmed)? as u32);
-        }
-        // Check float
-        if trimmed.ends_with('f') || trimmed.contains('.') {
-            let clean = trimmed.trim_end_matches('f');
-            if let Ok(fval) = clean.parse::<f32>() {
-                return Ok(fval.to_bits());
-            }
-        }
-        // Check integer
-        if let Ok(ival) = trimmed.parse::<i32>() {
-            return Ok(ival as u32);
-        }
-        // Semiring/Operator constant lookups
-        if let Some(val) = lookup_constant(trimmed) {
-            return Ok(val);
-        }
-        return Err(format!("Unresolved payload element: {}", trimmed).into());
+        return resolve_single_val(trimmed, symbols);
     }
 
-    // Packing multiple arguments (e.g. "R1 | R2" or "R0 | REL_0" or "R1 | R2 | BINARY_OP_ADD")
+    if parts.len() == 3 && is_register_str(parts[0]) && is_register_str(parts[1]) {
+        let src1 = parse_register(parts[0])? as u32;
+        let src2 = parse_register(parts[1])? as u32;
+        let op_id = resolve_single_val(parts[2], symbols)?;
+        return Ok(src1 | (src2 << 8) | (op_id << 16));
+    }
+
     let mut packed = 0u32;
     for (i, part) in parts.iter().enumerate() {
-        let val = if is_register_str(part) {
-            parse_register(part)? as u32
-        } else if let Some(&v) = symbols.get(*part) {
-            v
-        } else if let Some(v) = lookup_constant(part) {
-            v
-        } else {
-            part.parse::<u32>().map_err(|_| format!("Invalid integer inside packed payload: {}", part))?
-        };
-
+        let val = resolve_single_val(part, symbols)?;
         if i == 0 {
-            packed |= val & 0xFFFF; // lower 16 bits
+            packed |= val & 0xFFFF;
         } else if i == 1 {
-            packed |= (val & 0xFFFF) << 16; // upper 16 bits
-        } else if i == 2 {
-            // For 3-operand packing, clear the second operand to fit u8:
-            // e.g. R4, R1 | R2 | BINARY_OP_ADD
-            // Let's pack as: src1 (byte 0), src2 (byte 1), op_id (byte 2)
-            // Clear previous pack and write byte structure:
-            if parts.len() >= 3 {
-                let src1 = parse_register(parts[0])? as u32;
-                let src2 = parse_register(parts[1])? as u32;
-                let op_id = if let Some(v) = lookup_constant(parts[2]) {
-                    v
-                } else if let Some(&v) = symbols.get(parts[2]) {
-                    v
-                } else {
-                    parts[2].parse::<u32>()?
-                };
-                return Ok(src1 | (src2 << 8) | (op_id << 16));
-            }
+            packed |= (val & 0xFFFF) << 16;
         }
     }
     Ok(packed)

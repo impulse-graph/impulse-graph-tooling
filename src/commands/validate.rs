@@ -37,13 +37,13 @@ pub fn run(
     }
     if header.version() != IMPULSE_VERSION_PACKED {
         return Err(format!(
-            "Unsupported version 0x{:04X}, expected 0x{:04X} (v2.4)",
+            "Unsupported version 0x{:04X}, expected 0x{:04X} (v0.9.0)",
             header.version(),
             IMPULSE_VERSION_PACKED
         )
         .into());
     }
-    println!("  [OK] Header Magic & Version (IMPS v2.4)");
+    println!("  [OK] Header Magic & Version (IMPS v0.9.0)");
 
     // 2. Alignment Check (128-byte hardware alignment rule)
     if strict_alignment {

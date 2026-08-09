@@ -21,7 +21,7 @@ fn test_full_cli_command_suite() {
     let key_prefix = test_dir.join("test_key");
 
     let manifest_json = r#"{
-        "version": "2.4.0",
+        "version": "0.9.0",
         "domains": [
             { "id": 0, "name": "User", "key_type": "string" },
             { "id": 1, "name": "Group", "key_type": "string" }
@@ -124,7 +124,7 @@ fn test_compile_multi_relation_unique_domain_count() {
     let output_snapshot = test_dir.join("rbac_snapshot.imps");
 
     let manifest_json = r#"{
-        "version": "2.4.0",
+        "version": "0.9.0",
         "domains": [
             { "id": 0, "name": "USER", "key_type": "string" },
             { "id": 1, "name": "GROUP", "key_type": "string" },
@@ -159,7 +159,7 @@ fn test_compile_duplicate_relation_rejection() {
     let output_snapshot = test_dir.join("dup_rel_snapshot.imps");
 
     let manifest_json = r#"{
-        "version": "2.4.0",
+        "version": "0.9.0",
         "domains": [
             { "id": 0, "name": "USER", "key_type": "string" },
             { "id": 1, "name": "GROUP", "key_type": "string" }
