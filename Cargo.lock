@@ -780,6 +780,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "impulse-compiler"
+version = "0.9.0"
+dependencies = [
+ "impulse-graph",
+]
+
+[[package]]
 name = "impulse-graph"
 version = "0.9.0"
 
@@ -794,6 +801,7 @@ dependencies = [
  "comfy-table",
  "csv",
  "ed25519-dalek",
+ "impulse-compiler",
  "impulse-graph",
  "indicatif",
  "memmap2",
