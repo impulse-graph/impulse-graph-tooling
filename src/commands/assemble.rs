@@ -62,6 +62,8 @@ fn get_opcode(name: &str) -> Option<u8> {
         "OP_STABLE_CHECK" => Some(0x54),
         "OP_CALL" => Some(0x55),
         "OP_RET" => Some(0x56),
+        "OP_ENTER_FRAME" => Some(0x57),
+        "OP_LEAVE_FRAME" => Some(0x58),
         "OP_THROW" => Some(0x5A),
         "OP_ASSERT" => Some(0x5B),
         "OP_TRAP" => Some(0x5C),
