@@ -6,13 +6,17 @@ use impulse_graph::ffi::impulse_instruction_t;
 
 fn get_opcode(name: &str) -> Option<u8> {
     match name {
-        "OP_NOP" => Some(0x00),
-        "OP_INIT_INPUT_NODE" => Some(0x01),
-        "OP_INIT_INPUT_SET" => Some(0x02),
-        "OP_LOAD_CONST_INT" => Some(0x03),
-        "OP_MAP_KEYS_TO_DENSE" => Some(0x04),
-        "OP_LOAD_CONST_FLOAT" => Some(0x05),
-        "OP_LOAD_CONST_STR_PREFIX" => Some(0x06),
+        "OP_HALT" => Some(0x00),
+        "OP_NOP" => Some(0x01),
+        "OP_INIT_INPUT_NODE" => Some(0x02),
+        "OP_INIT_INPUT_SET" => Some(0x03),
+        "OP_LOAD_CONST_INT" => Some(0x04),
+        "OP_MAP_KEYS_TO_DENSE" => Some(0x05),
+        "OP_LOAD_CONST_FLOAT" => Some(0x06),
+        "OP_LOAD_CONST_STR_PREFIX" => Some(0x07),
+        "OP_LOAD_INLINE_ARRAY" => Some(0x08),
+        "OP_INIT_MOCK_GRAPH" => Some(0x09),
+
         "OP_CSR_WALK" => Some(0x10),
         "OP_CSR_WALK_FILTERED" => Some(0x11),
         "OP_CSR_DEGREE" => Some(0x12),
@@ -21,6 +25,12 @@ fn get_opcode(name: &str) -> Option<u8> {
         "OP_NODE_FILTER_STR_PREFIX" => Some(0x15),
         "OP_CSR_WALK_REDUCE_SUM" => Some(0x16),
         "OP_CSR_WALK_REDUCE" => Some(0x17),
+        "OP_CSC_WALK" => Some(0x18),
+        "OP_HAS_CSR" => Some(0x19),
+        "OP_HAS_CSC" => Some(0x1A),
+        "OP_HAS_COO" => Some(0x1B),
+        "OP_HAS_KEY_CATALOG" => Some(0x1C),
+
         "OP_SET_UNION" => Some(0x30),
         "OP_SET_INTERSECT" => Some(0x31),
         "OP_SET_DIFFERENCE" => Some(0x32),
@@ -31,6 +41,7 @@ fn get_opcode(name: &str) -> Option<u8> {
         "OP_VECTOR_STR_CONCAT" => Some(0x37),
         "OP_FLOAT_VECTOR_SCALE" => Some(0x38),
         "OP_L1_NORM_DIFF" => Some(0x39),
+
         "OP_CC_AFFOREST" => Some(0x40),
         "OP_MXV" => Some(0x41),
         "OP_VXM" => Some(0x42),
@@ -43,6 +54,7 @@ fn get_opcode(name: &str) -> Option<u8> {
         "OP_BRANDES_BACKWARD" => Some(0x49),
         "OP_DELTA_STEP_RELAX" => Some(0x4A),
         "OP_READ_EDGE_WEIGHT" => Some(0x4B),
+
         "OP_JMP" => Some(0x50),
         "OP_JZ" => Some(0x51),
         "OP_JNZ" => Some(0x52),
@@ -50,14 +62,41 @@ fn get_opcode(name: &str) -> Option<u8> {
         "OP_STABLE_CHECK" => Some(0x54),
         "OP_CALL" => Some(0x55),
         "OP_RET" => Some(0x56),
+        "OP_ENTER_FRAME" => Some(0x57),
+        "OP_LEAVE_FRAME" => Some(0x58),
+        "OP_THROW" => Some(0x5A),
+        "OP_ASSERT" => Some(0x5B),
+        "OP_TRAP" => Some(0x5C),
+
+        "OP_SAMPLE_NEIGHBORS" => Some(0x60),
+        "OP_RANDOM_WALK" => Some(0x61),
+        "OP_SCATTER_GATHER" => Some(0x62),
+        "OP_REBAC_CHECK" => Some(0x63),
+        "OP_ROARING_BITMAP_AND" => Some(0x64),
         "OP_ISLAND_DETECT" => Some(0x65),
-        "OP_MOV" => Some(0x70),
+        "OP_SPARSE_MATVEC" => Some(0x66),
+        "OP_LOUVAIN_MODULARITY" => Some(0x67),
+        "OP_KCORE_DECOMPOSITION" => Some(0x68),
+        "OP_MOTIF_MATCH_3" => Some(0x69),
+        "OP_GRAPH_ISOMORPHISM" => Some(0x6A),
+        "OP_ROARING_BITMAP_OR" => Some(0x6B),
+        "OP_ROARING_BITMAP_AND_NOT" => Some(0x6C),
+
+        "OP_MOV" | "OP_MOVE" => Some(0x70),
         "OP_CLEAR_REG" => Some(0x71),
+        "OP_LOAD_INDIRECT" => Some(0x72),
+        "OP_ALLOC_SCRATCH" => Some(0x73),
+        "OP_ASSERT_SCRATCH_BYTES" => Some(0x74),
+        "OP_SET_MAX_DOP" => Some(0x75),
+
         "OP_COLLECT_BITSET" => Some(0x90),
         "OP_COLLECT_ARRAY" => Some(0x91),
         "OP_MAP_DENSE_TO_KEYS" => Some(0x92),
         "OP_COLLECT_VALUE_MAP" => Some(0x93),
-        "OP_HALT" => Some(0xFF),
+        _ if name.starts_with("OP_RESERVED_") => {
+            let hex_part = name.strip_prefix("OP_RESERVED_").unwrap();
+            u8::from_str_radix(hex_part, 16).ok()
+        }
         _ => None,
     }
 }
@@ -210,7 +249,7 @@ pub fn run(input_path: &Path, output_path: &Path) -> Result<(), Box<dyn std::err
 
         let flags = parse_flags(&raw.flags_str)?;
         let dst_reg = parse_register(&raw.dst_str)?;
-        let payload = parse_payload(&raw.payload_str, current_pc, &labels, &symbols)?;
+        let payload = parse_payload(&raw.payload_str, opcode, current_pc, &labels, &symbols)?;
 
         let instr = impulse_instruction_t {
             opcode,
@@ -288,81 +327,77 @@ fn parse_flags(s: &str) -> Result<u8, Box<dyn std::error::Error>> {
     Ok(val)
 }
 
+fn resolve_single_val(
+    part: &str,
+    symbols: &HashMap<String, u32>,
+) -> Result<u32, Box<dyn std::error::Error>> {
+    let trimmed = part.trim();
+    if is_register_str(trimmed) {
+        return parse_register(trimmed).map(|r| r as u32);
+    }
+    if let Some(&v) = symbols.get(trimmed) {
+        return Ok(v);
+    }
+    if let Some(v) = lookup_constant(trimmed) {
+        return Ok(v);
+    }
+    if trimmed.starts_with("REL_") || trimmed.starts_with("DOMAIN_") || trimmed.starts_with("ATTR_") {
+        let suffix = trimmed
+            .trim_start_matches("REL_")
+            .trim_start_matches("DOMAIN_")
+            .trim_start_matches("ATTR_");
+        return Ok(suffix.parse::<u32>().unwrap_or(0));
+    }
+    trimmed
+        .parse::<u32>()
+        .map_err(|_| format!("Invalid integer inside payload operand: {}", trimmed).into())
+}
+
 fn parse_payload(
     s: &str,
+    opcode: u8,
     current_pc: usize,
     labels: &HashMap<String, usize>,
     symbols: &HashMap<String, u32>,
 ) -> Result<u32, Box<dyn std::error::Error>> {
     let parts: Vec<&str> = s.split('|').map(|x| x.trim()).collect();
-    
+
+    if opcode == 0x18 { // OP_CSC_WALK
+        if parts.len() == 2 {
+            let src = parse_register(parts[0])? as u32;
+            let rel = resolve_single_val(parts[1], symbols)?;
+            return Ok(src | (63 << 16) | (rel << 24));
+        } else if parts.len() == 3 {
+            let src = parse_register(parts[0])? as u32;
+            let unv = parse_register(parts[1])? as u32;
+            let rel = resolve_single_val(parts[2], symbols)?;
+            return Ok(src | (unv << 16) | (rel << 24));
+        }
+    }
+
     if parts.len() == 1 {
         let trimmed = parts[0];
-        // Check if label
         if let Some(&target_pc) = labels.get(trimmed) {
             let offset = (target_pc as i32) - (current_pc as i32);
             return Ok(offset as u32);
         }
-        // Check if custom symbol
-        if let Some(&val) = symbols.get(trimmed) {
-            return Ok(val);
-        }
-        // Check if register
-        if is_register_str(trimmed) {
-            return Ok(parse_register(trimmed)? as u32);
-        }
-        // Check float
-        if trimmed.ends_with('f') || trimmed.contains('.') {
-            let clean = trimmed.trim_end_matches('f');
-            if let Ok(fval) = clean.parse::<f32>() {
-                return Ok(fval.to_bits());
-            }
-        }
-        // Check integer
-        if let Ok(ival) = trimmed.parse::<i32>() {
-            return Ok(ival as u32);
-        }
-        // Semiring/Operator constant lookups
-        if let Some(val) = lookup_constant(trimmed) {
-            return Ok(val);
-        }
-        return Err(format!("Unresolved payload element: {}", trimmed).into());
+        return resolve_single_val(trimmed, symbols);
     }
 
-    // Packing multiple arguments (e.g. "R1 | R2" or "R0 | REL_0" or "R1 | R2 | BINARY_OP_ADD")
+    if parts.len() == 3 && is_register_str(parts[0]) && is_register_str(parts[1]) {
+        let src1 = parse_register(parts[0])? as u32;
+        let src2 = parse_register(parts[1])? as u32;
+        let op_id = resolve_single_val(parts[2], symbols)?;
+        return Ok(src1 | (src2 << 8) | (op_id << 16));
+    }
+
     let mut packed = 0u32;
     for (i, part) in parts.iter().enumerate() {
-        let val = if is_register_str(part) {
-            parse_register(part)? as u32
-        } else if let Some(&v) = symbols.get(*part) {
-            v
-        } else if let Some(v) = lookup_constant(part) {
-            v
-        } else {
-            part.parse::<u32>().map_err(|_| format!("Invalid integer inside packed payload: {}", part))?
-        };
-
+        let val = resolve_single_val(part, symbols)?;
         if i == 0 {
-            packed |= val & 0xFFFF; // lower 16 bits
+            packed |= val & 0xFFFF;
         } else if i == 1 {
-            packed |= (val & 0xFFFF) << 16; // upper 16 bits
-        } else if i == 2 {
-            // For 3-operand packing, clear the second operand to fit u8:
-            // e.g. R4, R1 | R2 | BINARY_OP_ADD
-            // Let's pack as: src1 (byte 0), src2 (byte 1), op_id (byte 2)
-            // Clear previous pack and write byte structure:
-            if parts.len() >= 3 {
-                let src1 = parse_register(parts[0])? as u32;
-                let src2 = parse_register(parts[1])? as u32;
-                let op_id = if let Some(v) = lookup_constant(parts[2]) {
-                    v
-                } else if let Some(&v) = symbols.get(parts[2]) {
-                    v
-                } else {
-                    parts[2].parse::<u32>()?
-                };
-                return Ok(src1 | (src2 << 8) | (op_id << 16));
-            }
+            packed |= (val & 0xFFFF) << 16;
         }
     }
     Ok(packed)

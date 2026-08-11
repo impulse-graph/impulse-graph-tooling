@@ -19,6 +19,7 @@ path = "src/bin/generate_docs.rs"
 
 [dependencies]
 impulse-graph = { path = "../impulse-graph-core/impulse-rust" }
+impulse-compiler = { path = "../impulse-graph-core/impulse-compiler" }
 clap = { version = "4.4", features = ["derive"] }
 clap_mangen = "0.2"
 serde = { version = "1.0", features = ["derive"] }
