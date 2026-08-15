@@ -1,0 +1,195 @@
+name: Release & Artifact Build Pipeline
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+      - 'v*.*.*-*'
+      - 'v*-*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. v0.9.0-preview.1)'
+        required: false
+        default: ''
+      core_ref:
+        description: 'Git ref/tag of impulse-graph-core to build against (default: matching tag or main)'
+        required: false
+        default: ''
+      prerelease:
+        description: 'Mark as pre-release'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  id-token: write # Required for Cosign keyless signing
+
+jobs:
+  build-native-tools:
+    name: Build Tooling (${{ matrix.target.os }}-${{ matrix.target.arch }}-${{ matrix.target.libc }})
+    runs-on: ${{ matrix.target.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          # Linux x86_64 (glibc)
+          - os: linux
+            arch: x86_64
+            libc: glibc
+            runner: ubuntu-22.04
+            rust_target: x86_64-unknown-linux-gnu
+          # Linux ARM64 (glibc)
+          - os: linux
+            arch: aarch64
+            libc: glibc
+            runner: ubuntu-24.04-arm
+            rust_target: aarch64-unknown-linux-gnu
+          # Linux x86_64 (musl static)
+          - os: linux
+            arch: x86_64
+            libc: musl
+            runner: ubuntu-latest
+            use_musl: true
+            rust_target: x86_64-unknown-linux-musl
+          # macOS Apple Silicon arm64
+          - os: darwin
+            arch: arm64
+            libc: darwin
+            runner: macos-14
+            rust_target: aarch64-apple-darwin
+          # macOS Intel x86_64
+          - os: darwin
+            arch: x86_64
+            libc: darwin
+            runner: macos-13
+            rust_target: x86_64-apple-darwin
+          # Windows x86_64 (MSVC /MT)
+          - os: windows
+            arch: x86_64
+            libc: msvc
+            runner: windows-latest
+            rust_target: x86_64-pc-windows-msvc
+
+    steps:
+      - name: Checkout impulse-graph-tooling
+        uses: actions/checkout@v4
+        with:
+          path: impulse-graph-tooling
+
+      - name: Resolve & Checkout impulse-graph-core
+        uses: actions/checkout@v4
+        with:
+          repository: impulse-graph/impulse-graph-core
+          path: impulse-graph-core
+          ref: ${{ inputs.core_ref || (startsWith(github.ref, 'refs/tags/') && github.ref_name) || 'main' }}
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target.rust_target }}
+
+      - name: Setup Musl Toolchain (Linux Static)
+        if: matrix.target.use_musl
+        run: |
+          sudo apt-get update && sudo apt-get install -y musl-tools
+          rustup target add ${{ matrix.target.rust_target }}
+
+      - name: Cargo Build Release Binaries
+        shell: bash
+        run: |
+          cd impulse-graph-tooling
+          cargo build --release --target ${{ matrix.target.rust_target }}
+
+      - name: Package Distributable Archives
+        shell: bash
+        run: |
+          TAG_NAME="${{ github.ref_name }}"
+          if [ -n "${{ inputs.version }}" ]; then
+            TAG_NAME="${{ inputs.version }}"
+          fi
+
+          DIST_NAME="impulse-tools-${TAG_NAME}-${{ matrix.target.os }}-${{ matrix.target.arch }}-${{ matrix.target.libc }}"
+          DIST_DIR="dist/${DIST_NAME}"
+          mkdir -p "$DIST_DIR"
+          mkdir -p release-dist
+
+          TARGET_DIR="impulse-graph-tooling/target/${{ matrix.target.rust_target }}/release"
+
+          if [ "${{ matrix.target.os }}" == "windows" ]; then
+            cp "${TARGET_DIR}/impulse-graph.exe" "$DIST_DIR/"
+            if [ -f "${TARGET_DIR}/impulse.exe" ]; then
+              cp "${TARGET_DIR}/impulse.exe" "$DIST_DIR/"
+            fi
+            if [ -f "${TARGET_DIR}/generate-docs.exe" ]; then
+              cp "${TARGET_DIR}/generate-docs.exe" "$DIST_DIR/"
+            fi
+            cd dist
+            7z a "../release-dist/${DIST_NAME}.zip" "${DIST_NAME}"
+          else
+            cp "${TARGET_DIR}/impulse-graph" "$DIST_DIR/"
+            if [ -f "${TARGET_DIR}/impulse" ]; then
+              cp "${TARGET_DIR}/impulse" "$DIST_DIR/"
+            fi
+            if [ -f "${TARGET_DIR}/generate-docs" ]; then
+              cp "${TARGET_DIR}/generate-docs" "$DIST_DIR/"
+            fi
+            cd dist
+            tar -czvf "../release-dist/${DIST_NAME}.tar.gz" "${DIST_NAME}"
+          fi
+
+      - name: Upload Native Distributable Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tooling-${{ matrix.target.os }}-${{ matrix.target.arch }}-${{ matrix.target.libc }}
+          path: release-dist/*
+
+  publish-release:
+    name: Publish GitHub Release & Sign Artifacts
+    needs: build-native-tools
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate SHA256 Checksums
+        run: |
+          cd release-assets
+          sha256sum * > SHA256SUMS
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3.5.0
+
+      - name: Sign SHA256SUMS with Cosign (Keyless OIDC)
+        run: |
+          cd release-assets
+          cosign sign-blob --yes --output-signature SHA256SUMS.sig SHA256SUMS
+
+      - name: Determine Pre-release Status
+        id: prerelease_check
+        run: |
+          TAG_NAME="${{ github.ref_name }}"
+          if [ -n "${{ inputs.version }}" ]; then
+            TAG_NAME="${{ inputs.version }}"
+          fi
+
+          if [ "${{ inputs.prerelease }}" == "true" ] || [[ "$TAG_NAME" =~ -preview|-PREVIEW|-rc|-alpha|-beta ]]; then
+            echo "is_prerelease=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_prerelease=false" >> $GITHUB_OUTPUT
+          fi
+          echo "release_tag=$TAG_NAME" >> $GITHUB_OUTPUT
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.prerelease_check.outputs.release_tag }}
+          name: "Impulse Graph Tooling ${{ steps.prerelease_check.outputs.release_tag }}"
+          files: |
+            release-assets/*
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ steps.prerelease_check.outputs.is_prerelease == 'true' }}
