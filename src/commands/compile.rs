@@ -38,6 +38,7 @@ struct DomainDef {
 
 #[derive(Debug, Deserialize)]
 struct RelationDef {
+    name: Option<String>,
     src_domain: u16,
     tgt_domain: u16,
     #[allow(dead_code)]
@@ -149,9 +150,16 @@ pub fn run(manifest_path: &Path, output_path: &Path) -> Result<(), Box<dyn Error
         }
     }
 
+    // Validate relation uniqueness
     let mut seen_relations = std::collections::HashSet::new();
     for r in &manifest.relations {
-        seen_relations.insert((r.src_domain, r.tgt_domain));
+        if !seen_relations.insert((r.src_domain, r.tgt_domain, &r.file)) {
+            return Err(format!(
+                "Duplicate relation definition in manifest for src_domain {} -> tgt_domain {} (file: {})",
+                r.src_domain, r.tgt_domain, r.file
+            )
+            .into());
+        }
     }
 
     struct CompiledRelation {
@@ -341,6 +349,16 @@ pub fn run(manifest_path: &Path, output_path: &Path) -> Result<(), Box<dyn Error
             cr.row_offsets,
             cr.col_indices,
         );
+
+        let default_rel_name = Path::new(&manifest.relations[rel_idx].file)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("RELATION");
+        let rel_name = manifest.relations[rel_idx]
+            .name
+            .as_deref()
+            .unwrap_or(default_rel_name);
+        writer.set_relation_name(rel_idx, rel_name);
 
         for attr in cr.attributes {
             writer.add_attribute_to_relation(rel_idx, &attr.0, attr.1, attr.2, attr.3, attr.4);
