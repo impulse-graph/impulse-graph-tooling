@@ -149,16 +149,9 @@ pub fn run(manifest_path: &Path, output_path: &Path) -> Result<(), Box<dyn Error
         }
     }
 
-    // Validate relation uniqueness
     let mut seen_relations = std::collections::HashSet::new();
     for r in &manifest.relations {
-        if !seen_relations.insert((r.src_domain, r.tgt_domain)) {
-            return Err(format!(
-                "Duplicate relation definition in manifest for src_domain {} -> tgt_domain {}",
-                r.src_domain, r.tgt_domain
-            )
-            .into());
-        }
+        seen_relations.insert((r.src_domain, r.tgt_domain));
     }
 
     struct CompiledRelation {
