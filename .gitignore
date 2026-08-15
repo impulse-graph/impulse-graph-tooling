@@ -40,7 +40,7 @@ cmake-build-*/
 /target/
 
 # Go
-bin/
+/bin/
 
 # Python & AI/ML
 __pycache__/
