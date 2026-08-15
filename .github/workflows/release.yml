@@ -87,7 +87,7 @@ jobs:
       - name: Setup Musl Toolchain (Linux Static)
         if: matrix.target.use_musl
         run: |
-          sudo apt-get update && sudo apt-get install -y musl-tools
+          sudo apt-get update && sudo apt-get install -y musl-tools musl-dev g++
           rustup target add ${{ matrix.target.rust_target }}
 
       - name: Cargo Build Release Binaries
