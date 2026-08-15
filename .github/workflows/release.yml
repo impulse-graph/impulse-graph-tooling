@@ -76,6 +76,11 @@ jobs:
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
 
+      - name: Remove Git Bash link.exe collision (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: rm -f "C:/Program Files/Git/usr/bin/link.exe"
+
       - name: Setup Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
