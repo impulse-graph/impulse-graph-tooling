@@ -76,7 +76,8 @@ jobs:
         with:
           repository: impulse-graph/impulse-graph-core
           path: impulse-graph-core
-          ref: ${{ inputs.core_ref || (startsWith(github.ref, 'refs/tags/') && github.ref_name) || 'main' }}
+          ref: ${{ inputs.core_ref || 'main' }}
+          token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
 
       - name: Setup Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
