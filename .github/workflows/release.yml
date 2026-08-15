@@ -45,20 +45,13 @@ jobs:
             libc: glibc
             runner: ubuntu-24.04-arm
             rust_target: aarch64-unknown-linux-gnu
-          # Linux x86_64 (musl static)
-          - os: linux
-            arch: x86_64
-            libc: musl
-            runner: ubuntu-latest
-            use_musl: true
-            rust_target: x86_64-unknown-linux-musl
           # macOS Apple Silicon arm64
           - os: darwin
             arch: arm64
             libc: darwin
             runner: macos-14
             rust_target: aarch64-apple-darwin
-          # Windows x86_64 (MSVC /MT)
+          # Windows x86_64 (MSVC)
           - os: windows
             arch: x86_64
             libc: msvc
@@ -79,16 +72,14 @@ jobs:
           ref: ${{ inputs.core_ref || 'main' }}
           token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
 
+      - name: Setup MSVC Environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
       - name: Setup Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target.rust_target }}
-
-      - name: Setup Musl Toolchain (Linux Static)
-        if: matrix.target.use_musl
-        run: |
-          sudo apt-get update && sudo apt-get install -y musl-tools musl-dev g++
-          rustup target add ${{ matrix.target.rust_target }}
 
       - name: Cargo Build Release Binaries
         shell: bash
