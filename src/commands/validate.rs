@@ -223,6 +223,28 @@ pub fn run(
             }
         }
     }
+
+    // 4. Validate Section 2.6 Index Directory Table Entries
+    for idx_entry in reader.index_entries() {
+        if idx_entry.data_offset > 0 {
+            if idx_entry.data_offset % 128 != 0 {
+                return Err(format!(
+                    "Index #{}: Data offset 0x{:X} is not 128-byte hardware aligned",
+                    idx_entry.index_id, idx_entry.data_offset
+                ).into());
+            }
+            if idx_entry.data_offset + idx_entry.data_bytes > file_len {
+                return Err(format!(
+                    "Index #{}: Data end 0x{:X} exceeds file length {}",
+                    idx_entry.index_id, idx_entry.data_offset + idx_entry.data_bytes, file_len
+                ).into());
+            }
+        }
+    }
+    if !reader.index_entries().is_empty() {
+        println!("  [OK] Section 2.6 Index Directory Table ({} indexes) validated & 128B aligned", reader.index_entries().len());
+    }
+
     println!("  [OK] CSR & CSC Topology arrays, SoA attributes 128B alignment & bounds verified");
 
     // 4. Ed25519 Signature Verification

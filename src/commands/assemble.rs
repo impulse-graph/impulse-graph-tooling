@@ -30,6 +30,10 @@ fn get_opcode(name: &str) -> Option<u8> {
         "OP_HAS_CSC" => Some(0x1A),
         "OP_HAS_COO" => Some(0x1B),
         "OP_HAS_KEY_CATALOG" => Some(0x1C),
+        "OP_DENSE_WALK" => Some(0x1D),
+        "OP_CREATE_SCRATCH_INDEX" => Some(0x1E),
+        "OP_DROP_SCRATCH_INDEX" => Some(0x1F),
+        "OP_HAS_DENSE" => Some(0x20),
 
         "OP_SET_UNION" => Some(0x30),
         "OP_SET_INTERSECT" => Some(0x31),

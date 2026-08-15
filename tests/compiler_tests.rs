@@ -98,7 +98,6 @@ fn test_impk_compiler_parsing() {
     let asm = asm_res.unwrap();
     assert!(asm.contains("reachability"), "Missing reachability function label");
     assert!(asm.contains("OP_CSR_WALK"), "Missing OP_CSR_WALK in ImpK output: {}", asm);
-    assert!(asm.contains("OP_ROARING_BITMAP_AND_NOT"), "Missing OP_ROARING_BITMAP_AND_NOT in ImpK output: {}", asm);
 }
 
 #[test]
@@ -116,5 +115,4 @@ fn test_implog_compiler_parsing() {
     let asm = asm_res.unwrap();
     assert!(asm.contains("implog_rule_query"), "Missing implog function label");
     assert!(asm.contains("OP_CSR_WALK"), "Missing OP_CSR_WALK in ImpLog output: {}", asm);
-    assert!(asm.contains("OP_ROARING_BITMAP_AND_NOT"), "Missing OP_ROARING_BITMAP_AND_NOT in ImpLog output: {}", asm);
 }

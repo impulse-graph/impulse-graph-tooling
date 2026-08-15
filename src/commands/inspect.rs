@@ -140,6 +140,36 @@ pub fn run(file: &Path, format: &str, verbose: bool) -> Result<(), Box<dyn Error
     println!("--- RELATION CATALOG & TOPOLOGY ---");
     println!("{}", rel_table);
 
+    // Section 2.6 Secondary Index Directory Table
+    if !reader.index_entries().is_empty() {
+        println!();
+        println!("--- SECTION 2.6 INDEX DIRECTORY TABLE ---");
+        let mut idx_table = Table::new();
+        idx_table.set_header(vec!["Index ID", "Domain ID", "Rel ID", "Attr Index", "Type Code", "Index Name", "Data Bytes"]);
+        for idx in reader.index_entries() {
+            let rel_str = if idx.relation_id == 0xFFFF {
+                format!("NODE (Dom #{})", idx.domain_id)
+            } else {
+                let rel_info = reader.relations().iter().find(|r| r.relation_id == idx.relation_id);
+                if let Some(r) = rel_info {
+                    format!("EDGE (Rel #{}: Dom #{}->#{})", idx.relation_id, r.src_domain_id, r.tgt_domain_id)
+                } else {
+                    format!("EDGE (Rel #{})", idx.relation_id)
+                }
+            };
+            idx_table.add_row(vec![
+                idx.index_id.to_string(),
+                idx.domain_id.to_string(),
+                rel_str,
+                idx.attribute_index.to_string(),
+                format!("0x{:02X}", idx.index_type),
+                idx.name.clone(),
+                idx.data_bytes.to_string(),
+            ]);
+        }
+        println!("{}", idx_table);
+    }
+
     if verbose {
         println!();
         println!("--- VERBOSE SECTION OFFSETS & ATTRIBUTE DESCRIPTORS ---");
@@ -176,6 +206,9 @@ fn format_required_features(flags: u64) -> String {
     }
     if flags & IMPULSE_FEAT_CRYPTO_SIGNED != 0 {
         names.push("CRYPTO_SIGNED");
+    }
+    if flags & 0x40 != 0 {
+        names.push("INDEX_DIRECTORY");
     }
     format!("0x{:016X} [{}]", flags, names.join(", "))
 }
