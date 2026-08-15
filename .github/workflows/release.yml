@@ -174,13 +174,78 @@ jobs:
           fi
           echo "release_tag=$TAG_NAME" >> $GITHUB_OUTPUT
 
+      - name: Generate Formatted Release Description
+        run: |
+          TAG_NAME="${{ steps.prerelease_check.outputs.release_tag }}"
+          cat << EOF > release_description.md
+          ## Impulse Graph Developer Tooling & CLI Suite
+
+          Unified command-line utilities and bytecode compiler for the Impulse Graph Engine.
+
+          ---
+
+          ### 📦 Pre-Compiled Standalone Binaries
+
+          Every bundle includes the static binaries:
+          - \`impulse\` — Main CLI orchestrator (assemble, disassemble, inspect, compile, run, opt)
+          - \`impulse-graph\` — Snapshot validation, execution kernel, and schema verification
+          - \`generate-docs\` — ISA opcode specification and markdown doc generator
+
+          | Platform / Architecture | Format | Direct Download |
+          | :--- | :--- | :--- |
+          | **macOS Apple Silicon** (\`arm64\`) | \`.tar.gz\` | [\`impulse-tools-${TAG_NAME}-darwin-arm64-darwin.tar.gz\`](https://github.com/impulse-graph/impulse-graph-tooling/releases/download/${TAG_NAME}/impulse-tools-${TAG_NAME}-darwin-arm64-darwin.tar.gz) |
+          | **Linux x86_64** (\`glibc >= 2.28\`) | \`.tar.gz\` | [\`impulse-tools-${TAG_NAME}-linux-x86_64-glibc.tar.gz\`](https://github.com/impulse-graph/impulse-graph-tooling/releases/download/${TAG_NAME}/impulse-tools-${TAG_NAME}-linux-x86_64-glibc.tar.gz) |
+          | **Linux ARM64** (\`glibc >= 2.28\`) | \`.tar.gz\` | [\`impulse-tools-${TAG_NAME}-linux-aarch64-glibc.tar.gz\`](https://github.com/impulse-graph/impulse-graph-tooling/releases/download/${TAG_NAME}/impulse-tools-${TAG_NAME}-linux-aarch64-glibc.tar.gz) |
+          | **Windows x86_64** (\`MSVC\`) | \`.zip\` | [\`impulse-tools-${TAG_NAME}-windows-x86_64-msvc.zip\`](https://github.com/impulse-graph/impulse-graph-tooling/releases/download/${TAG_NAME}/impulse-tools-${TAG_NAME}-windows-x86_64-msvc.zip) |
+
+          ---
+
+          ### 🚀 Quick Start Example
+
+          \`\`\`bash
+          # Extract archive
+          tar -xzvf impulse-tools-${TAG_NAME}-darwin-arm64-darwin.tar.gz
+          cd impulse-tools-${TAG_NAME}-darwin-arm64-darwin
+
+          # Inspect an immutable .imps snapshot file
+          ./impulse inspect /path/to/graph.imps
+
+          # Compile an ImpScheme (.impscm) or ImpLog (.implog) program
+          ./impulse compile query.impscm -o query.impb
+
+          # Disassemble bytecode to ImpAsm assembly
+          ./impulse disassemble query.impb
+          \`\`\`
+
+          ---
+
+          ### 🛡️ SLSA Level 3 Attestation & Verification
+
+          Every artifact is cryptographically hashed and signed with Sigstore / Cosign keyless OIDC:
+          - **Checksums**: [\`SHA256SUMS\`](https://github.com/impulse-graph/impulse-graph-tooling/releases/download/${TAG_NAME}/SHA256SUMS)
+          - **Signature**: [\`SHA256SUMS.sig\`](https://github.com/impulse-graph/impulse-graph-tooling/releases/download/${TAG_NAME}/SHA256SUMS.sig)
+
+          \`\`\`bash
+          # Verify checksums
+          sha256sum -c SHA256SUMS
+
+          # Verify Cosign keyless signature
+          cosign verify-blob \
+            --certificate-identity-regexp "https://github.com/impulse-graph/impulse-graph-tooling/" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --signature SHA256SUMS.sig \
+            SHA256SUMS
+          \`\`\`
+          EOF
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.prerelease_check.outputs.release_tag }}
           name: "Impulse Graph Tooling ${{ steps.prerelease_check.outputs.release_tag }}"
+          body_path: release_description.md
           files: |
             release-assets/*
-          generate_release_notes: true
+          generate_release_notes: false
           draft: false
           prerelease: ${{ steps.prerelease_check.outputs.is_prerelease == 'true' }}
