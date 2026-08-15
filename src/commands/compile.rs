@@ -354,6 +354,74 @@ pub fn run(manifest_path: &Path, output_path: &Path) -> Result<(), Box<dyn Error
         }
     }
 
+    // Add Domain Indexes
+    for d in &manifest.domains {
+        let map = domain_node_maps.get(&d.id).unwrap();
+        let key_count = std::cmp::max(16, (map.len() as f64 * 1.5) as u64);
+        let seed = 0x1234567890ABCDEF_u64;
+
+        let mut string_pool = vec![0u8];
+        let mut offsets = Vec::new();
+        let mut keys = Vec::new();
+        let mut node_ids = Vec::new();
+
+        for (k, v) in map {
+            keys.push(k.clone());
+            node_ids.push(*v);
+            offsets.push(string_pool.len() as u32);
+            string_pool.extend_from_slice(k.as_bytes());
+            string_pool.push(0);
+        }
+
+        let string_table_bytes = string_pool.len() as u32;
+        let mut table = vec![0u8; (key_count as usize) * 8];
+
+        for i in 0..keys.len() {
+            let k = &keys[i];
+            let off = offsets[i];
+            let nid = node_ids[i];
+
+            let mut h = seed;
+            for &b in k.as_bytes() {
+                h ^= b as u64;
+                h = h.wrapping_mul(1099511628211);
+            }
+
+            let mut slot = (h % key_count) as usize;
+            let start_slot = slot;
+            loop {
+                let mut k_off = [0u8; 4];
+                k_off.copy_from_slice(&table[slot * 8 .. slot * 8 + 4]);
+                if u32::from_le_bytes(k_off) == 0 {
+                    table[slot * 8 .. slot * 8 + 4].copy_from_slice(&off.to_le_bytes());
+                    table[slot * 8 + 4 .. slot * 8 + 8].copy_from_slice(&nid.to_le_bytes());
+                    break;
+                }
+                slot = (slot + 1) % (key_count as usize);
+                if slot == start_slot {
+                    panic!("Hash table full!");
+                }
+            }
+        }
+
+        let mut index_data = Vec::new();
+        index_data.extend_from_slice(&key_count.to_le_bytes());
+        index_data.extend_from_slice(&seed.to_le_bytes());
+        index_data.extend_from_slice(&string_table_bytes.to_le_bytes());
+        index_data.extend_from_slice(&[0u8; 12]);
+        index_data.extend_from_slice(&string_pool);
+        index_data.extend_from_slice(&table);
+
+        writer.add_index(
+            d.id,
+            0xFFFF,
+            0,
+            4, // IMP_INDEX_MINIMAL_PERFECT_HASH
+            "_domain_index",
+            index_data,
+        );
+    }
+
     if is_stdout {
         let stdout = io::stdout();
         let mut handle = BufWriter::new(stdout.lock());
