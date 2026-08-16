@@ -94,6 +94,9 @@ pub enum Commands {
         input: PathBuf,
     },
 
+    /// Synthesize synthetic graph datasets and .imps binary snapshots across multiple topology profiles
+    Generate(GenerateArgs),
+
     /// Subcommand namespace for Compiler & Bytecode Toolchain (Code Only)
     Compiler {
         #[command(subcommand)]
@@ -304,6 +307,9 @@ pub enum SnapshotCommands {
         #[arg(short, long, default_value = "ModelWeightNode")]
         domain: String,
     },
+
+    /// Synthesize synthetic graph datasets and .imps binary snapshots across multiple topology profiles
+    Generate(GenerateArgs),
 }
 
 #[derive(Subcommand)]
@@ -337,3 +343,150 @@ pub enum CryptoCommands {
         key: PathBuf,
     },
 }
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct GenerateArgs {
+    /// Topology profile shape: graph500, social (Barabási-Albert), social-sbm (Communities), erdos-renyi (Random), grid (2D/3D Mesh), tree (Hierarchical), bipartite
+    #[arg(short = 'p', long, default_value = "graph500", value_name = "PROFILE")]
+    pub profile: String,
+
+    /// Destination output path (.imps, .tsv, .csv)
+    #[arg(short = 'o', long, default_value = "generated_graph.imps", value_name = "OUTPUT")]
+    pub output: PathBuf,
+
+    /// Output serialization format: imps, tsv, csv
+    #[arg(long, default_value = "imps", value_name = "FORMAT")]
+    pub format: String,
+
+    // --- Profile: Graph500 (R-MAT) Parameters ---
+    /// Graph500 / R-MAT scale factor S (number of vertices N = 2^S, e.g. 10..36)
+    #[arg(short = 's', long, default_value_t = 10, value_name = "SCALE")]
+    pub scale: u8,
+
+    /// Graph500 edge factor E (edges = 2^scale * edge_factor)
+    #[arg(short = 'e', long, default_value_t = 16, value_name = "FACTOR")]
+    pub edge_factor: u32,
+
+    /// Graph500 R-MAT quadrant A probability
+    #[arg(long, default_value_t = 0.57, value_name = "PROB")]
+    pub a: f64,
+
+    /// Graph500 R-MAT quadrant B probability
+    #[arg(long, default_value_t = 0.19, value_name = "PROB")]
+    pub b: f64,
+
+    /// Graph500 R-MAT quadrant C probability
+    #[arg(long, default_value_t = 0.19, value_name = "PROB")]
+    pub c: f64,
+
+    /// Graph500 R-MAT quadrant D probability
+    #[arg(long, default_value_t = 0.05, value_name = "PROB")]
+    pub d: f64,
+
+    // --- Profile: General Node & Edge Counts (Social, Erdos-Renyi, Bipartite) ---
+    /// Total number of vertices/nodes (for social, erdos-renyi, star, etc.)
+    #[arg(short = 'n', long, value_name = "NODES")]
+    pub nodes: Option<u64>,
+
+    /// Target number of edges (for erdos-renyi, bipartite, graph500 override)
+    #[arg(short = 'm', long, value_name = "EDGES")]
+    pub edges: Option<u64>,
+
+    /// Edges attached per new node (for Barabási–Albert social model)
+    #[arg(long, default_value_t = 8, value_name = "COUNT")]
+    pub edges_per_node: u32,
+
+    /// Edge probability p (for Erdos-Renyi G(N, p))
+    #[arg(long, value_name = "PROB")]
+    pub p: Option<f64>,
+
+    // --- Profile: Social-SBM / Communities Parameters ---
+    /// Number of communities / clusters (for social-sbm)
+    #[arg(short = 'k', long, default_value_t = 10, value_name = "CLUSTERS")]
+    pub communities: u32,
+
+    /// Intra-community edge probability (for social-sbm)
+    #[arg(long, default_value_t = 0.02, value_name = "PROB")]
+    pub p_intra: f64,
+
+    /// Inter-community edge probability (for social-sbm)
+    #[arg(long, default_value_t = 0.0005, value_name = "PROB")]
+    pub p_inter: f64,
+
+    // --- Profile: Grid / Lattice Parameters ---
+    /// Grid X dimension
+    #[arg(long, default_value_t = 32, value_name = "DIM")]
+    pub dim_x: u32,
+
+    /// Grid Y dimension
+    #[arg(long, default_value_t = 32, value_name = "DIM")]
+    pub dim_y: u32,
+
+    /// Grid Z dimension (optional for 3D grid/mesh)
+    #[arg(long, value_name = "DIM")]
+    pub dim_z: Option<u32>,
+
+    /// Periodic / toroidal grid boundary wrap-around
+    #[arg(long)]
+    pub toroidal: bool,
+
+    // --- Profile: Tree / Hierarchical Parameters ---
+    /// Tree branching factor K (for balanced K-ary tree)
+    #[arg(long, default_value_t = 3, value_name = "BRANCHING")]
+    pub branching: u32,
+
+    /// Tree depth D (for balanced K-ary tree)
+    #[arg(long, default_value_t = 6, value_name = "DEPTH")]
+    pub depth: u32,
+
+    /// Generate a star topology (1 central hub connected to all nodes)
+    #[arg(long)]
+    pub star: bool,
+
+    // --- Profile: Bipartite Parameters ---
+    /// Source domain node count (for bipartite graphs)
+    #[arg(long, value_name = "COUNT")]
+    pub src_nodes: Option<u64>,
+
+    /// Target domain node count (for bipartite graphs)
+    #[arg(long, value_name = "COUNT")]
+    pub tgt_nodes: Option<u64>,
+
+    // --- General Graph Generation & Output Controls ---
+    /// Deterministic pseudo-random seed (default: random system seed)
+    #[arg(long, value_name = "SEED")]
+    pub seed: Option<u64>,
+
+    /// Generate undirected (symmetric bidirectional) edges
+    #[arg(long)]
+    pub undirected: bool,
+
+    /// Allow self-loops (u -> u edges)
+    #[arg(long)]
+    pub allow_self_loops: bool,
+
+    /// Include CSC (Compressed Sparse Column) reverse topology auxiliary index in .imps
+    #[arg(long)]
+    pub include_csc: bool,
+
+    /// Source domain catalog entity name
+    #[arg(long, default_value = "Node", value_name = "NAME")]
+    pub domain_name: String,
+
+    /// Target domain catalog entity name (for bipartite graphs)
+    #[arg(long, default_value = "Resource", value_name = "NAME")]
+    pub tgt_domain_name: String,
+
+    /// Relation catalog name
+    #[arg(long, default_value = "CONNECTS", value_name = "NAME")]
+    pub relation_name: String,
+
+    /// Comma-separated synthetic edge attributes to generate (e.g. "weight:f32,timestamp:i64,type:i32")
+    #[arg(long, value_name = "ATTRS")]
+    pub attributes: Option<String>,
+
+    /// Chunk / batch buffer size in edges for streaming generation
+    #[arg(long, default_value_t = 5_000_000, value_name = "BATCH_SIZE")]
+    pub chunk_size: usize,
+}
+

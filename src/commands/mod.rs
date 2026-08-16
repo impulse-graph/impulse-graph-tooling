@@ -5,6 +5,7 @@ pub mod diff;
 pub mod disassemble;
 pub mod docgen;
 pub mod export;
+pub mod generate;
 pub mod inspect;
 pub mod merge;
 pub mod optimize;
