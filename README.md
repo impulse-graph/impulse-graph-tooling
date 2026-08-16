@@ -57,7 +57,15 @@ Inspect binary header metadata, domain catalogs, and CSR relation tables:
 impulse-graph inspect graph500_s12.imps
 ```
 
-### 4. Validate Spec v0.9.0 Compliance
+### 4. Compute Topology, Multiplicity & CBO Statistics
+
+Compute degree percentiles, supernodes, multiplicity classification, attribute zone maps, and CBO sketches:
+
+```bash
+impulse-graph stats graph500_s12.imps
+```
+
+### 5. Validate Spec v0.9.0 Compliance
 
 Verify header checksums, 128-byte hardware memory alignment, and CSR array bounds:
 
@@ -65,7 +73,7 @@ Verify header checksums, 128-byte hardware memory alignment, and CSR array bound
 impulse-graph snapshot validate graph500_s12.imps
 ```
 
-### 5. Optimize Snapshot Layout
+### 6. Optimize Snapshot Layout
 
 Apply Reverse Cuthill-McKee (RCM) bandwidth reduction and convert CSR column indices to Delta-VByte encoding for optimal L1/L2 cache locality:
 
@@ -159,6 +167,7 @@ Supported attribute types:
 
 * **`impulse generate`**: Synthesize `.imps` snapshots, TSV, or CSV edge lists across 7 graph topology profiles.
 * **`impulse inspect <SNAPSHOT>`**: Output human-readable or JSON details of Page 0 header, section offsets, domain catalogs, and topology metadata.
+* **`impulse stats <SNAPSHOT>`**: Compute structural graph statistics, in/out degree percentiles ($P_{50}, P_{90}, P_{99}$), supernode hub classification, relation multiplicity ($1:1, M:1, 1:M, M:M$), attribute zone maps, and Cost-Based Optimizer (CBO) sketches.
 * **`impulse snapshot validate <SNAPSHOT>`**: Verify 128-byte hardware alignment, monotonic CSR row offsets, column index range bounds, and metadata integrity.
 * **`impulse snapshot optimize <OPTIONS>`**: Offline topology optimizer:
   - `--rcm`: Apply Reverse Cuthill-McKee vertex renumbering to reduce matrix bandwidth.

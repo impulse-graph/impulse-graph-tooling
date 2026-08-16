@@ -97,6 +97,25 @@ pub enum Commands {
     /// Synthesize synthetic graph datasets and .imps binary snapshots across multiple topology profiles
     Generate(GenerateArgs),
 
+    /// Calculate structural graph statistics, degree distributions, multiplicity, and CBO sketches
+    Stats {
+        /// Path to binary snapshot file (.imps)
+        #[arg(value_name = "SNAPSHOT")]
+        file: PathBuf,
+
+        /// Output format (text, json)
+        #[arg(short, long, default_value = "text")]
+        format: String,
+
+        /// Verbose detail dumping (includes CBO sketches JSON and histograms)
+        #[arg(short, long)]
+        verbose: bool,
+
+        /// Supernode Z-Score threshold (default: 3.0)
+        #[arg(long, default_value_t = 3.0)]
+        supernode_threshold: f64,
+    },
+
     /// Subcommand namespace for Compiler & Bytecode Toolchain (Code Only)
     Compiler {
         #[command(subcommand)]
@@ -310,6 +329,25 @@ pub enum SnapshotCommands {
 
     /// Synthesize synthetic graph datasets and .imps binary snapshots across multiple topology profiles
     Generate(GenerateArgs),
+
+    /// Calculate structural graph statistics, degree distributions, multiplicity, and CBO sketches
+    Stats {
+        /// Path to binary snapshot file (.imps)
+        #[arg(value_name = "SNAPSHOT")]
+        file: PathBuf,
+
+        /// Output format (text, json)
+        #[arg(short, long, default_value = "text")]
+        format: String,
+
+        /// Verbose detail dumping (includes CBO sketches JSON and histograms)
+        #[arg(short, long)]
+        verbose: bool,
+
+        /// Supernode Z-Score threshold (default: 3.0)
+        #[arg(long, default_value_t = 3.0)]
+        supernode_threshold: f64,
+    },
 }
 
 #[derive(Subcommand)]

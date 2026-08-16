@@ -12,4 +12,5 @@ pub mod optimize;
 pub mod run;
 pub mod safetensors;
 pub mod script_compile;
+pub mod stats;
 pub mod validate;

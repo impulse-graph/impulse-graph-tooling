@@ -42,6 +42,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Generate(args) => {
             commands::generate::run(&args)?;
         }
+        Commands::Stats {
+            file,
+            format,
+            verbose,
+            supernode_threshold,
+        } => {
+            commands::stats::run(&file, &format, verbose, supernode_threshold)?;
+        }
 
         // Compiler Namespace (Code Only)
         Commands::Compiler { command } => match command {
@@ -134,6 +142,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             SnapshotCommands::Generate(args) => {
                 commands::generate::run(&args)?;
+            }
+            SnapshotCommands::Stats {
+                file,
+                format,
+                verbose,
+                supernode_threshold,
+            } => {
+                commands::stats::run(&file, &format, verbose, supernode_threshold)?;
             }
         },
 

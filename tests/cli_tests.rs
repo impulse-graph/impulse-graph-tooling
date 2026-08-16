@@ -180,3 +180,59 @@ fn test_compile_duplicate_relation_rejection() {
 
     let _ = fs::remove_dir_all(&test_dir);
 }
+
+#[test]
+fn test_stats_cli_invocation_and_json_mode() {
+    let test_dir = setup_test_workspace();
+    let snapshot_path = test_dir.join("stats_graph.imps");
+
+    let gen_args = impulse_graph_tooling::GenerateArgs {
+        profile: "graph500".to_string(),
+        output: snapshot_path.clone(),
+        format: "imps".to_string(),
+        scale: 8,
+        edge_factor: 16,
+        a: 0.57,
+        b: 0.19,
+        c: 0.19,
+        d: 0.05,
+        nodes: None,
+        edges: None,
+        edges_per_node: 8,
+        p: None,
+        communities: 10,
+        p_intra: 0.02,
+        p_inter: 0.0005,
+        dim_x: 32,
+        dim_y: 32,
+        dim_z: None,
+        toroidal: false,
+        branching: 3,
+        depth: 6,
+        star: false,
+        src_nodes: None,
+        tgt_nodes: None,
+        seed: Some(42),
+        undirected: false,
+        allow_self_loops: false,
+        include_csc: false,
+        domain_name: "Vertex".to_string(),
+        tgt_domain_name: "Resource".to_string(),
+        relation_name: "EDGES".to_string(),
+        attributes: Some("weight:f32".to_string()),
+        chunk_size: 1_000_000,
+    };
+
+    let gen_res = commands::generate::run(&gen_args);
+    assert!(gen_res.is_ok(), "generate failed: {:?}", gen_res);
+
+    // Text format stats
+    let stats_text_res = commands::stats::run(&snapshot_path, "text", true, 3.0);
+    assert!(stats_text_res.is_ok(), "stats (text) failed: {:?}", stats_text_res);
+
+    // JSON format stats
+    let stats_json_res = commands::stats::run(&snapshot_path, "json", false, 3.0);
+    assert!(stats_json_res.is_ok(), "stats (json) failed: {:?}", stats_json_res);
+
+    let _ = fs::remove_dir_all(&test_dir);
+}
