@@ -18,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
       - name: Checkout Core Repository
@@ -36,7 +36,23 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Build & Test Tooling Suite
+        shell: bash
         run: |
           cd impulse-graph-tooling
           cargo build --release
           cargo test --verbose
+
+  ci-gate:
+    name: CI Gate / All Checks Passed
+    needs: [build-tooling-suite]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify All Required CI Checks
+        run: |
+          echo "Checking status of all upstream CI dependencies..."
+          if [ "${{ contains(needs.*.result, 'failure') }}" = "true" ] || [ "${{ contains(needs.*.result, 'cancelled') }}" = "true" ]; then
+            echo "❌ CI Gate Failed: One or more upstream test or build jobs failed or were cancelled."
+            exit 1
+          fi
+          echo "✅ CI Gate Passed: All upstream checks passed or were safely skipped by path filters."
