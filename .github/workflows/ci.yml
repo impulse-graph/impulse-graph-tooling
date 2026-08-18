@@ -32,6 +32,10 @@ jobs:
         with:
           path: impulse-graph-tooling
 
+      - name: Setup MSVC Toolchain (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
       - name: Setup Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
 
