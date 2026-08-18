@@ -2,7 +2,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 pub mod commands;
-pub use impulse_compiler as compiler;
+pub mod compiler;
 pub mod parquet_reader;
 
 #[derive(Parser)]
