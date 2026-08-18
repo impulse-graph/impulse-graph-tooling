@@ -21,32 +21,22 @@ jobs:
         os: [ubuntu-latest, macos-latest]
 
     steps:
-      - name: Checkout impulse-graph-tooling
+      - name: Checkout Core Repository
         uses: actions/checkout@v4
+        with:
+          repository: impulse-graph/impulse-graph-core
+          path: impulse-graph-core
+
+      - name: Checkout Tooling Repository
+        uses: actions/checkout@v4
+        with:
+          path: impulse-graph-tooling
 
       - name: Setup Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Provision Core Stub
+      - name: Build & Test Tooling Suite
         run: |
-          if [ ! -f ../impulse-graph-core/impulse-rust/Cargo.toml ] && [ ! -f impulse-graph-core/impulse-rust/Cargo.toml ]; then
-            mkdir -p ../impulse-graph-core/impulse-rust/src
-            cat << 'EOF' > ../impulse-graph-core/impulse-rust/Cargo.toml
-[package]
-name = "impulse-graph"
-version = "0.9.0"
-edition = "2021"
-
-[lib]
-name = "impulse_graph"
-path = "src/lib.rs"
-EOF
-            touch ../impulse-graph-core/impulse-rust/src/lib.rs
-          fi
-
-      - name: Cargo Build & Test Tooling Suite
-        run: |
+          cd impulse-graph-tooling
           cargo build --release
-          if [ -d impulse-graph-core/impulse-cpp/build ]; then
-            cargo test --verbose
-          fi
+          cargo test --verbose
