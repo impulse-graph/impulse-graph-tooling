@@ -39,6 +39,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Disassemble { input } => {
             commands::disassemble::run(&input)?;
         }
+        Commands::Generate(args) => {
+            commands::generate::run(&args)?;
+        }
+        Commands::Stats {
+            file,
+            format,
+            verbose,
+            supernode_threshold,
+        } => {
+            commands::stats::run(&file, &format, verbose, supernode_threshold)?;
+        }
 
         // Compiler Namespace (Code Only)
         Commands::Compiler { command } => match command {
@@ -128,6 +139,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 domain,
             } => {
                 commands::safetensors::run(&input, &output, &domain)?;
+            }
+            SnapshotCommands::Generate(args) => {
+                commands::generate::run(&args)?;
+            }
+            SnapshotCommands::Stats {
+                file,
+                format,
+                verbose,
+                supernode_threshold,
+            } => {
+                commands::stats::run(&file, &format, verbose, supernode_threshold)?;
             }
         },
 

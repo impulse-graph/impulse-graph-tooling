@@ -1,6 +1,5 @@
 use impulse_graph_tooling::commands;
-use impulse_graph_tooling::compiler;
-use impulse_graph_tooling::compiler::frontends::LanguageTarget;
+use impulse_graph_tooling::compiler::{self, LanguageTarget};
 use std::env;
 use std::fs;
 use std::path::Path;

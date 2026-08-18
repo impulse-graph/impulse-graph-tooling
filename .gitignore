@@ -63,12 +63,8 @@ site/
 *.tsv
 *.csv
 *.zst
-impulse-compile/impulse-compile
-impulse-compile/cpp/impulse-compile
-impulse-inspect/impulse-inspect
-impulse-inspect/cpp/impulse-inspect
-impulse-opt/impulse-opt
-impulse-opt/impulse-opt-static
-# Rust build artifacts
-impulse-compile/rust/target/
+!tests/fixtures/*.tsv
+!tests/fixtures/*.csv
+!examples/**/*.tsv
+!examples/**/*.csv
 datasets/

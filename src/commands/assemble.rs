@@ -16,6 +16,7 @@ fn get_opcode(name: &str) -> Option<u8> {
         "OP_LOAD_CONST_STR_PREFIX" => Some(0x07),
         "OP_LOAD_INLINE_ARRAY" => Some(0x08),
         "OP_INIT_MOCK_GRAPH" => Some(0x09),
+        "OP_CSR_WALK_2HOP" => Some(0x0E),
 
         "OP_CSR_WALK" => Some(0x10),
         "OP_CSR_WALK_FILTERED" => Some(0x11),
@@ -202,35 +203,46 @@ pub fn run(input_path: &Path, output_path: &Path) -> Result<(), Box<dyn std::err
         let mut dst_str = "0".to_string();
         let mut payload_str = "0".to_string();
 
-        match args.len() {
-            0 => {}
-            1 => {
-                // E.g. OP_HALT or OP_JMP label
-                payload_str = args[0].to_string();
+        let mut is_named = false;
+        for arg in &args {
+            if let Some((k, v)) = arg.split_once('=') {
+                is_named = true;
+                match k.trim().to_lowercase().as_str() {
+                    "flags" => flags_str = v.trim().to_string(),
+                    "dst" => dst_str = v.trim().to_string(),
+                    "payload" => payload_str = v.trim().to_string(),
+                    _ => {}
+                }
             }
-            2 => {
-                // E.g. OP_INIT_INPUT_NODE R0, 0
-                // Or OP_COLLECT_BITSET R63, R5
-                dst_str = args[0].to_string();
-                payload_str = args[1].to_string();
+        }
+
+        if !is_named {
+            match args.len() {
+                0 => {}
+                1 => {
+                    // E.g. OP_HALT or OP_JMP label
+                    payload_str = args[0].to_string();
+                }
+                2 => {
+                    // E.g. OP_INIT_INPUT_NODE R0, 0
+                    // Or OP_COLLECT_BITSET R63, R5
+                    dst_str = args[0].to_string();
+                    payload_str = args[1].to_string();
+                }
+                3 => {
+                    // E.g. OP_CSR_WALK R4, R0, REL_0
+                    // Or OP_EWISE_ADD R5, R4, R3 (which is OP_EWISE_ADD dst_reg, src1, src2)
+                    dst_str = args[0].to_string();
+                    flags_str = "0".to_string();
+                    payload_str = format!("{} | {}", args[1], args[2]);
+                }
+                4 => {
+                    // E.g. OP_EWISE_ADD R4, R1, R2, BINARY_OP_ADD
+                    dst_str = args[0].to_string();
+                    payload_str = format!("{} | {} | {}", args[1], args[2], args[3]);
+                }
+                _ => return Err(format!("Invalid number of arguments in: {} at line {}", instr_text, line_num).into()),
             }
-            3 => {
-                // E.g. OP_CSR_WALK R4, R0, REL_0
-                // Or OP_EWISE_ADD R5, R4, R3 (which is OP_EWISE_ADD dst_reg, src1, src2)
-                dst_str = args[0].to_string();
-                
-                // Let's pack the src operands/relations/constants into payload
-                // If it is a standard GraphBLAS or walk instruction:
-                // We will parse them and pack them during Pass 2, so keep them joined here
-                flags_str = "0".to_string();
-                payload_str = format!("{} | {}", args[1], args[2]);
-            }
-            4 => {
-                // E.g. OP_EWISE_ADD R4, R1, R2, BINARY_OP_ADD
-                dst_str = args[0].to_string();
-                payload_str = format!("{} | {} | {}", args[1], args[2], args[3]);
-            }
-            _ => return Err(format!("Invalid number of arguments in: {} at line {}", instr_text, line_num).into()),
         }
 
         raw_program.push(RawInstruction {
@@ -320,6 +332,12 @@ fn parse_flags(s: &str) -> Result<u8, Box<dyn std::error::Error>> {
             "FLAG_INVERT" | "INVERT" => val |= 0x04,
             "FLAG_OFFHEAP" | "OFFHEAP" => val |= 0x08,
             _ => {
+                if part.starts_with("0X") {
+                    if let Ok(num) = u8::from_str_radix(&part[2..], 16) {
+                        val |= num;
+                        continue;
+                    }
+                }
                 if let Ok(num) = part.parse::<u8>() {
                     val |= num;
                 } else if !part.is_empty() {
@@ -336,6 +354,11 @@ fn resolve_single_val(
     symbols: &HashMap<String, u32>,
 ) -> Result<u32, Box<dyn std::error::Error>> {
     let trimmed = part.trim();
+    if trimmed.starts_with("0x") || trimmed.starts_with("0X") {
+        if let Ok(v) = u32::from_str_radix(&trimmed[2..], 16) {
+            return Ok(v);
+        }
+    }
     if is_register_str(trimmed) {
         return parse_register(trimmed).map(|r| r as u32);
     }
