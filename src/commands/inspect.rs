@@ -179,9 +179,11 @@ pub fn run(file: &Path, format: &str, verbose: bool) -> Result<(), Box<dyn Error
                 r.relation_id, r.name, r.csr_row_off_offset, r.csr_row_off_bytes, r.csr_col_idx_offset, r.csr_col_idx_bytes
             );
             for a in &r.attributes {
+                let nullability = if (a.type_code & 0x80) != 0 { "[Nullable]" } else { "[Non-Null]" };
+                let base_type = a.type_code & 0x7F;
                 println!(
-                    "    Attribute '{}': type_code=0x{:02X}, dim={}, data_offset=0x{:X} ({} B)",
-                    a.name, a.type_code, a.dimension, a.data_offset, a.data_bytes
+                    "    Attribute '{}': type_code=0x{:02X} {}, base_type=0x{:02X}, dim={}, data_offset=0x{:X} ({} B)",
+                    a.name, a.type_code, nullability, base_type, a.dimension, a.data_offset, a.data_bytes
                 );
             }
         }
