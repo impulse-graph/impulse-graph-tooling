@@ -90,9 +90,16 @@ fn test_parquet_compile_nodes_edges_attributes() {
 
     let rel_meta = &reader.relations()[0];
     assert_eq!(rel_meta.edge_count, 3);
-    assert_eq!(rel_meta.attributes.len(), 1);
+    assert_eq!(rel_meta.attributes.len(), 2);
 
-
+    let age_data = reader.get_domain_attribute_data(0, "age").expect("domain attribute 'age' should be present");
+    assert_eq!(age_data.len(), 12);
+    let val0 = i32::from_le_bytes(age_data[0..4].try_into().unwrap());
+    let val1 = i32::from_le_bytes(age_data[4..8].try_into().unwrap());
+    let val2 = i32::from_le_bytes(age_data[8..12].try_into().unwrap());
+    assert_eq!(val0, 25);
+    assert_eq!(val1, 30);
+    assert_eq!(val2, 35);
 
     let _ = fs::remove_dir_all(&test_dir);
 }

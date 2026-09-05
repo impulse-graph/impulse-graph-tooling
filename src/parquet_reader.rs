@@ -377,8 +377,10 @@ pub fn read_parquet_column_data(
 
     let mut result = HashMap::new();
     for (name, acc) in accumulators {
-        let is_nullable = acc.requested_type_code.map(|tc| (tc & 0x80) != 0).unwrap_or(false)
-            || acc.null_count > 0;
+        let is_nullable = acc
+            .requested_type_code
+            .map(|tc| (tc & 0x80) != 0)
+            .unwrap_or(acc.null_count > 0);
 
         let base_type = acc
             .requested_type_code
@@ -436,18 +438,38 @@ pub fn read_text_column_data(
         b' '
     };
 
+    let has_headers = {
+        let trimmed = first_line.trim();
+        let tokens: Vec<&str> = if delimiter == b'\t' {
+            trimmed.split('\t').collect()
+        } else if delimiter == b',' {
+            trimmed.split(',').collect()
+        } else {
+            trimmed.split_whitespace().collect()
+        };
+        columns.iter().any(|&(col_name, _, _)| tokens.iter().any(|t| t.trim() == col_name))
+    };
+
     let mut csv_reader = csv::ReaderBuilder::new()
         .delimiter(delimiter)
-        .has_headers(true)
+        .has_headers(has_headers)
         .flexible(true)
         .from_path(file_path)?;
 
-    let headers = csv_reader.headers()?.clone();
-    let header_indices: HashMap<String, usize> = headers
-        .iter()
-        .enumerate()
-        .map(|(idx, h)| (h.trim().to_string(), idx))
-        .collect();
+    let header_indices: HashMap<String, usize> = if has_headers {
+        let headers = csv_reader.headers()?.clone();
+        headers
+            .iter()
+            .enumerate()
+            .map(|(idx, h)| (h.trim().to_string(), idx))
+            .collect()
+    } else {
+        columns
+            .iter()
+            .enumerate()
+            .map(|(idx, &(col_name, _, _))| (col_name.to_string(), idx + 2))
+            .collect()
+    };
 
     let mut raw_rows: HashMap<String, Vec<Option<String>>> = HashMap::new();
     for &(col_name, _, _) in columns {
@@ -482,7 +504,9 @@ pub fn read_text_column_data(
         let null_count = vals.iter().filter(|v| v.is_none()).count();
 
         let req_tc = req_type_str.map(parse_type_code);
-        let is_nullable = req_tc.map(|tc| (tc & 0x80) != 0).unwrap_or(false) || null_count > 0;
+        let is_nullable = req_tc
+            .map(|tc| (tc & 0x80) != 0)
+            .unwrap_or(null_count > 0);
         let base_type = req_tc.map(|tc| tc & 0x7F).unwrap_or(0x03); // Default to INT32
         let dimension = dim_opt.unwrap_or(1);
 
