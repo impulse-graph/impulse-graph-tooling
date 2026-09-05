@@ -1,6 +1,6 @@
 use arrow_array::{
-    ArrayRef, Date32Array, FixedSizeListArray, Float32Array, Float64Array, Int32Array,
-    RecordBatch, StringArray, TimestampMillisecondArray,
+    ArrayRef, Date32Array, FixedSizeListArray, Float32Array, Float64Array, Int32Array, RecordBatch,
+    StringArray, TimestampMillisecondArray,
 };
 use arrow_schema::{DataType, Field, Schema, TimeUnit};
 use impulse_graph_tooling::parquet_reader::{read_parquet_column_data, read_text_column_data};
@@ -10,7 +10,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 fn setup_test_workspace() -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("impulse_pq_reader_test_{}", rand::random::<u32>()));
+    let dir =
+        std::env::temp_dir().join(format!("impulse_pq_reader_test_{}", rand::random::<u32>()));
     let _ = fs::create_dir_all(&dir);
     dir
 }
@@ -92,9 +93,11 @@ fn test_read_parquet_nullable_with_validity_bitmap() {
     let test_dir = setup_test_workspace();
     let pq_path = test_dir.join("nullable.parquet");
 
-    let schema = Arc::new(Schema::new(vec![
-        Field::new("opt_i32", DataType::Int32, true),
-    ]));
+    let schema = Arc::new(Schema::new(vec![Field::new(
+        "opt_i32",
+        DataType::Int32,
+        true,
+    )]));
 
     let col_i32: ArrayRef = Arc::new(Int32Array::from(vec![Some(100), None, Some(300)]));
     write_parquet_file(&pq_path, schema, vec![col_i32]);
@@ -133,15 +136,16 @@ fn test_read_parquet_fixed_size_list_vector_embeddings() {
 
     // Dimension = 4 floats per row, 2 rows
     let values = Arc::new(Float32Array::from(vec![
-        0.1f32, 0.2, 0.3, 0.4,
-        1.1, 1.2, 1.3, 1.4,
+        0.1f32, 0.2, 0.3, 0.4, 1.1, 1.2, 1.3, 1.4,
     ]));
     let item_field = Arc::new(Field::new("item", DataType::Float32, false));
     let list_array = FixedSizeListArray::new(item_field.clone(), 4, values, None);
 
-    let schema = Arc::new(Schema::new(vec![
-        Field::new("embedding", DataType::FixedSizeList(item_field, 4), false),
-    ]));
+    let schema = Arc::new(Schema::new(vec![Field::new(
+        "embedding",
+        DataType::FixedSizeList(item_field, 4),
+        false,
+    )]));
 
     write_parquet_file(&pq_path, schema, vec![Arc::new(list_array)]);
 
@@ -169,11 +173,18 @@ fn test_read_parquet_timestamps_and_dates() {
     let pq_path = test_dir.join("temporal.parquet");
 
     let schema = Arc::new(Schema::new(vec![
-        Field::new("ts_ms", DataType::Timestamp(TimeUnit::Millisecond, None), false),
+        Field::new(
+            "ts_ms",
+            DataType::Timestamp(TimeUnit::Millisecond, None),
+            false,
+        ),
         Field::new("date_d", DataType::Date32, false),
     ]));
 
-    let col_ts: ArrayRef = Arc::new(TimestampMillisecondArray::from(vec![1700000000000i64, 1700000001000]));
+    let col_ts: ArrayRef = Arc::new(TimestampMillisecondArray::from(vec![
+        1700000000000i64,
+        1700000001000,
+    ]));
     let col_dt: ArrayRef = Arc::new(Date32Array::from(vec![19000i32, 19001]));
 
     write_parquet_file(&pq_path, schema, vec![col_ts, col_dt]);

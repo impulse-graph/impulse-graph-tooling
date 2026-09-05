@@ -5,7 +5,11 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 
 pub fn run(file: &Path, out_dir: &Path, format: &str) -> Result<(), Box<dyn Error>> {
-    println!("Exporting snapshot {} to {}...", file.display(), out_dir.display());
+    println!(
+        "Exporting snapshot {} to {}...",
+        file.display(),
+        out_dir.display()
+    );
     fs::create_dir_all(out_dir)?;
 
     let reader = SnapshotReader::open(file)?;
@@ -15,7 +19,10 @@ pub fn run(file: &Path, out_dir: &Path, format: &str) -> Result<(), Box<dyn Erro
     };
 
     for (idx, rel) in reader.relations().iter().enumerate() {
-        let out_filename = format!("relation_{}_{}.{}", rel.src_domain_id, rel.tgt_domain_id, format);
+        let out_filename = format!(
+            "relation_{}_{}.{}",
+            rel.src_domain_id, rel.tgt_domain_id, format
+        );
         let out_path = out_dir.join(&out_filename);
         println!("  Writing relation #{} -> {}...", idx, out_path.display());
 

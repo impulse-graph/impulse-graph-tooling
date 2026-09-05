@@ -16,7 +16,10 @@ pub enum LanguageTarget {
     Cel,
 }
 
-pub fn compile_script_to_impas(source: &str, target: LanguageTarget) -> Result<String, Box<dyn Error>> {
+pub fn compile_script_to_impas(
+    source: &str,
+    target: LanguageTarget,
+) -> Result<String, Box<dyn Error>> {
     let lang = match target {
         LanguageTarget::ImpScm => impulse_graph::ffi::IMPULSE_LANG_IMPSCM,
         LanguageTarget::ImpK => impulse_graph::ffi::IMPULSE_LANG_IMPK,
@@ -51,4 +54,3 @@ pub fn compile_script_to_impas(source: &str, target: LanguageTarget) -> Result<S
 pub fn compile_to_impas(source: &str) -> Result<String, Box<dyn Error>> {
     compile_script_to_impas(source, LanguageTarget::ImpScm)
 }
-

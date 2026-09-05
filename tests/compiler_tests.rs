@@ -7,7 +7,11 @@ fn test_compile_cypher_to_impas() {
     assert!(asm_res.is_ok(), "compile Cypher failed: {:?}", asm_res);
 
     let asm = asm_res.unwrap();
-    assert!(asm.contains(".version"), "Assembly missing .version header: {}", asm);
+    assert!(
+        asm.contains(".version"),
+        "Assembly missing .version header: {}",
+        asm
+    );
     assert!(
         asm.contains("OP_CSR_WALK") || asm.contains("OP_ADAPTIVE_WALK"),
         "Assembly missing traversal opcode: {}",
@@ -23,9 +27,15 @@ fn test_compile_implog_to_impas() {
     assert!(asm_res.is_ok(), "compile ImpLog failed: {:?}", asm_res);
 
     let asm = asm_res.unwrap();
-    assert!(asm.contains(".version"), "Assembly missing .version header: {}", asm);
     assert!(
-        asm.contains("OP_CSR_WALK") || asm.contains("OP_ADAPTIVE_WALK") || asm.contains("OP_COLLECT_BITSET"),
+        asm.contains(".version"),
+        "Assembly missing .version header: {}",
+        asm
+    );
+    assert!(
+        asm.contains("OP_CSR_WALK")
+            || asm.contains("OP_ADAPTIVE_WALK")
+            || asm.contains("OP_COLLECT_BITSET"),
         "Assembly missing expected instructions: {}",
         asm
     );
@@ -39,8 +49,16 @@ fn test_compile_impk_to_impas() {
     assert!(asm_res.is_ok(), "compile ImpK failed: {:?}", asm_res);
 
     let asm = asm_res.unwrap();
-    assert!(asm.contains(".version"), "Assembly missing .version header: {}", asm);
-    assert!(asm.contains("OP_CSR_WALK") || asm.contains("OP_MXV") || asm.contains("OP_ADAPTIVE_WALK"), "Assembly missing traversal opcode: {}", asm);
+    assert!(
+        asm.contains(".version"),
+        "Assembly missing .version header: {}",
+        asm
+    );
+    assert!(
+        asm.contains("OP_CSR_WALK") || asm.contains("OP_MXV") || asm.contains("OP_ADAPTIVE_WALK"),
+        "Assembly missing traversal opcode: {}",
+        asm
+    );
 }
 
 #[test]
@@ -50,6 +68,10 @@ fn test_compile_impscm_to_impas() {
     assert!(asm_res.is_ok(), "compile ImpScheme failed: {:?}", asm_res);
 
     let asm = asm_res.unwrap();
-    assert!(asm.contains(".version"), "Assembly missing .version header: {}", asm);
+    assert!(
+        asm.contains(".version"),
+        "Assembly missing .version header: {}",
+        asm
+    );
     assert!(asm.contains("OP_HALT"), "Assembly missing OP_HALT: {}", asm);
 }

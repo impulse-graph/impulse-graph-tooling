@@ -86,11 +86,23 @@ fn test_build_multi_domain_heterogeneous_graph() {
     }"#;
 
     fs::write(&manifest_path, manifest_json).unwrap();
-    fs::write(&users_docs_tsv, "alice\tdoc_101\nalice\tdoc_102\nbob\tdoc_102\n").unwrap();
-    fs::write(&docs_topics_tsv, "doc_101\tgraph_analytics\ndoc_102\tdatabases\ndoc_102\tcompilers\n").unwrap();
+    fs::write(
+        &users_docs_tsv,
+        "alice\tdoc_101\nalice\tdoc_102\nbob\tdoc_102\n",
+    )
+    .unwrap();
+    fs::write(
+        &docs_topics_tsv,
+        "doc_101\tgraph_analytics\ndoc_102\tdatabases\ndoc_102\tcompilers\n",
+    )
+    .unwrap();
 
     let build_res = commands::compile::run(&manifest_path, &snapshot_path);
-    assert!(build_res.is_ok(), "multi-domain build failed: {:?}", build_res);
+    assert!(
+        build_res.is_ok(),
+        "multi-domain build failed: {:?}",
+        build_res
+    );
 
     let reader = SnapshotReader::open(&snapshot_path).unwrap();
     assert_eq!(reader.header().domain_count(), 3);
@@ -142,13 +154,25 @@ fn test_build_domain_predefined_nodes_and_isolated_vertices() {
     fs::write(&manifest_path, manifest_json).unwrap();
 
     let build_res = commands::compile::run(&manifest_path, &snapshot_path);
-    assert!(build_res.is_ok(), "build with predefined nodes failed: {:?}", build_res);
+    assert!(
+        build_res.is_ok(),
+        "build with predefined nodes failed: {:?}",
+        build_res
+    );
 
     let reader = SnapshotReader::open(&snapshot_path).unwrap();
-    assert_eq!(reader.domains()[0].node_count, 5, "Domain must contain all 5 predefined nodes");
+    assert_eq!(
+        reader.domains()[0].node_count,
+        5,
+        "Domain must contain all 5 predefined nodes"
+    );
 
     let row_offsets = reader.get_row_offsets(0).unwrap();
-    assert_eq!(row_offsets.len(), 6, "Row offsets size must be node_count + 1 = 6");
+    assert_eq!(
+        row_offsets.len(),
+        6,
+        "Row offsets size must be node_count + 1 = 6"
+    );
     assert_eq!(row_offsets[5], 2, "Total edges must be 2");
 
     let _ = fs::remove_dir_all(&test_dir);
@@ -171,7 +195,10 @@ fn test_build_rejects_missing_edge_files() {
     fs::write(&manifest_path, manifest_json).unwrap();
 
     let build_res = commands::compile::run(&manifest_path, &snapshot_path);
-    assert!(build_res.is_err(), "build MUST fail when edge file does not exist");
+    assert!(
+        build_res.is_err(),
+        "build MUST fail when edge file does not exist"
+    );
 
     let _ = fs::remove_dir_all(&test_dir);
 }
@@ -203,7 +230,11 @@ fn test_build_with_typed_soa_edge_attributes() {
     fs::write(&manifest_path, manifest_json).unwrap();
 
     let build_res = commands::compile::run(&manifest_path, &snapshot_path);
-    assert!(build_res.is_ok(), "build with attributes failed: {:?}", build_res);
+    assert!(
+        build_res.is_ok(),
+        "build with attributes failed: {:?}",
+        build_res
+    );
 
     let reader = SnapshotReader::open(&snapshot_path).unwrap();
     let rel = &reader.relations()[0];
@@ -212,7 +243,11 @@ fn test_build_with_typed_soa_edge_attributes() {
 
     // Compute stats on the generated snapshot
     let stats_res = commands::stats::run(&snapshot_path, "json", true, 2.0);
-    assert!(stats_res.is_ok(), "stats failed on built snapshot: {:?}", stats_res);
+    assert!(
+        stats_res.is_ok(),
+        "stats failed on built snapshot: {:?}",
+        stats_res
+    );
 
     let _ = fs::remove_dir_all(&test_dir);
 }
@@ -257,7 +292,11 @@ fn test_build_full_spectrum_of_attribute_types_and_nullability() {
     fs::write(&manifest_path, manifest_json).unwrap();
 
     let build_res = commands::compile::run(&manifest_path, &snapshot_path);
-    assert!(build_res.is_ok(), "build full types failed: {:?}", build_res);
+    assert!(
+        build_res.is_ok(),
+        "build full types failed: {:?}",
+        build_res
+    );
 
     let reader = SnapshotReader::open(&snapshot_path).unwrap();
     let rel = &reader.relations()[0];
@@ -283,4 +322,3 @@ fn test_build_full_spectrum_of_attribute_types_and_nullability() {
 
     let _ = fs::remove_dir_all(&test_dir);
 }
-

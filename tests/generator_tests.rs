@@ -19,7 +19,7 @@ fn test_generate_graph500_rmat() {
         profile: "graph500".to_string(),
         output: snapshot_path.clone(),
         format: "imps".to_string(),
-        scale: 8, // 256 vertices
+        scale: 8,        // 256 vertices
         edge_factor: 16, // 256 * 16 = 4096 edges
         a: 0.57,
         b: 0.19,
@@ -412,7 +412,11 @@ fn test_generate_bipartite_multi_domain() {
     assert!(res.is_ok(), "Bipartite generation failed: {:?}", res);
 
     let reader = SnapshotReader::open(&snapshot_path).expect("Failed to open bipartite snapshot");
-    assert_eq!(reader.header().domain_count(), 2, "Bipartite graph MUST have 2 distinct domains");
+    assert_eq!(
+        reader.header().domain_count(),
+        2,
+        "Bipartite graph MUST have 2 distinct domains"
+    );
     assert_eq!(reader.domains()[0].name, "Account");
     assert_eq!(reader.domains()[0].node_count, 250);
     assert_eq!(reader.domains()[1].name, "Device");

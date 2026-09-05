@@ -1,14 +1,13 @@
+use impulse_graph::ffi::{
+    impulse_instruction_t, impulse_snapshot_close, impulse_snapshot_max_node_count,
+    impulse_snapshot_open, impulse_snapshot_t, impulse_vm_context_bitset_get_word,
+    impulse_vm_context_create, impulse_vm_context_destroy, impulse_vm_context_get_float_vector,
+    impulse_vm_context_t, impulse_vm_execute, impulse_vm_state_t,
+};
+use std::ffi::CString;
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
-use std::ffi::CString;
-use impulse_graph::ffi::{
-    impulse_snapshot_t, impulse_vm_context_t, impulse_instruction_t, impulse_vm_state_t,
-    impulse_snapshot_open, impulse_snapshot_close, impulse_snapshot_max_node_count,
-    impulse_vm_context_create, impulse_vm_context_destroy,
-    impulse_vm_execute,
-    impulse_vm_context_get_float_vector, impulse_vm_context_bitset_get_word,
-};
 
 pub fn run(
     snapshot_path: &Path,
@@ -18,7 +17,8 @@ pub fn run(
     // 1. Open snapshot file via FFI
     let c_path = CString::new(snapshot_path.to_str().ok_or("Invalid snapshot path")?)?;
     let mut status = 0i32;
-    let snap: *mut impulse_snapshot_t = unsafe { impulse_snapshot_open(c_path.as_ptr(), &mut status) };
+    let snap: *mut impulse_snapshot_t =
+        unsafe { impulse_snapshot_open(c_path.as_ptr(), &mut status) };
 
     if snap.is_null() {
         return Err(format!("Failed to open snapshot: status code {}", status).into());
@@ -28,7 +28,9 @@ pub fn run(
     // 2. Create VM query context
     let ctx: *mut impulse_vm_context_t = unsafe { impulse_vm_context_create(snap) };
     if ctx.is_null() {
-        unsafe { impulse_snapshot_close(snap); }
+        unsafe {
+            impulse_snapshot_close(snap);
+        }
         return Err("Failed to create VM context".into());
     }
 
@@ -70,9 +72,12 @@ pub fn run(
     state.registers[0] = input_val;
     state.register_types[0] = 0x01; // TYPE_INT64
 
-    println!("Executing bytecode ({} instructions) with input R0 = {}...", instruction_count, input_val);
+    println!(
+        "Executing bytecode ({} instructions) with input R0 = {}...",
+        instruction_count, input_val
+    );
     let start_time = std::time::Instant::now();
-    
+
     // 5. Run the VM execute loop
     let exec_status = unsafe {
         impulse_vm_execute(
@@ -84,7 +89,10 @@ pub fn run(
     };
 
     let elapsed = start_time.elapsed();
-    println!("Execution completed in {:.3?} with code {}", elapsed, exec_status);
+    println!(
+        "Execution completed in {:.3?} with code {}",
+        elapsed, exec_status
+    );
 
     if exec_status != 0 {
         unsafe {
@@ -107,8 +115,8 @@ pub fn run(
             // TYPE_BITSET_HANDLE
             let handle = ret_val as usize;
             let num_nodes = unsafe { impulse_snapshot_max_node_count(snap) } as usize;
-            let word_count = (num_nodes + 63) / 64;
-            
+            let word_count = num_nodes.div_ceil(64);
+
             let mut active_nodes = Vec::new();
             for word_idx in 0..word_count {
                 let word = unsafe { impulse_vm_context_bitset_get_word(ctx, handle, word_idx) };
@@ -128,7 +136,11 @@ pub fn run(
             if !active_nodes.is_empty() {
                 let print_limit = 20usize;
                 let print_len = std::cmp::min(active_nodes.len(), print_limit);
-                println!("Active Nodes (first {}): {:?}", print_len, &active_nodes[..print_len]);
+                println!(
+                    "Active Nodes (first {}): {:?}",
+                    print_len,
+                    &active_nodes[..print_len]
+                );
             }
         }
         0x0C => {
@@ -136,12 +148,12 @@ pub fn run(
             let handle = ret_val as usize;
             let num_nodes = unsafe { impulse_snapshot_max_node_count(snap) } as usize;
             let float_ptr = unsafe { impulse_vm_context_get_float_vector(ctx, handle) };
-            
+
             if !float_ptr.is_null() {
                 let slice = unsafe { std::slice::from_raw_parts(float_ptr, num_nodes) };
                 let mut non_zero_count = 0;
                 let mut first_values = Vec::new();
-                
+
                 for (i, &val) in slice.iter().enumerate() {
                     if val != 0.0 {
                         non_zero_count += 1;

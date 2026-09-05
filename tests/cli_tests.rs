@@ -43,10 +43,18 @@ fn test_full_cli_command_suite() {
 
     // 2. INSPECT (Text & JSON mode)
     let inspect_text_res = commands::inspect::run(&base_snapshot, "text", true);
-    assert!(inspect_text_res.is_ok(), "inspect (text) failed: {:?}", inspect_text_res);
+    assert!(
+        inspect_text_res.is_ok(),
+        "inspect (text) failed: {:?}",
+        inspect_text_res
+    );
 
     let inspect_json_res = commands::inspect::run(&base_snapshot, "json", false);
-    assert!(inspect_json_res.is_ok(), "inspect (json) failed: {:?}", inspect_json_res);
+    assert!(
+        inspect_json_res.is_ok(),
+        "inspect (json) failed: {:?}",
+        inspect_json_res
+    );
 
     // 3. VALIDATE
     let validate_res = commands::validate::run(&base_snapshot, true, None);
@@ -56,7 +64,7 @@ fn test_full_cli_command_suite() {
     let opt_res = commands::optimize::run(
         &base_snapshot,
         &opt_snapshot,
-        true, // RCM
+        true,  // RCM
         false, // degree_sort
         false, // csc
         Some("delta_vbyte"),
@@ -111,7 +119,10 @@ fn test_binary_executable_invocation() {
         .status()
         .expect("Failed to execute impulse-graph binary");
 
-    assert!(status.success(), "impulse-graph --help returned non-zero exit status");
+    assert!(
+        status.success(),
+        "impulse-graph --help returned non-zero exit status"
+    );
 }
 
 #[test]
@@ -143,8 +154,13 @@ fn test_compile_multi_relation_unique_domain_count() {
     let compile_res = commands::compile::run(&manifest_path, &output_snapshot);
     assert!(compile_res.is_ok(), "compile failed: {:?}", compile_res);
 
-    let reader = impulse_graph::SnapshotReader::open(&output_snapshot).expect("Failed to open snapshot");
-    assert_eq!(reader.header().domain_count(), 3, "Domain count MUST be exactly 3 for 3 unique domains");
+    let reader =
+        impulse_graph::SnapshotReader::open(&output_snapshot).expect("Failed to open snapshot");
+    assert_eq!(
+        reader.header().domain_count(),
+        3,
+        "Domain count MUST be exactly 3 for 3 unique domains"
+    );
     assert_eq!(reader.relation_count(), 2, "Relation count MUST be 2");
 
     let _ = fs::remove_dir_all(&test_dir);
@@ -174,9 +190,16 @@ fn test_compile_duplicate_relation_rejection() {
     fs::write(&user_group_path, "u1\tg1\n").expect("Failed to write user_group TSV");
 
     let compile_res = commands::compile::run(&manifest_path, &output_snapshot);
-    assert!(compile_res.is_err(), "compile MUST fail when duplicate relations are defined");
+    assert!(
+        compile_res.is_err(),
+        "compile MUST fail when duplicate relations are defined"
+    );
     let err_msg = compile_res.unwrap_err().to_string();
-    assert!(err_msg.contains("Duplicate relation definition"), "Error message MUST indicate duplicate relation: {}", err_msg);
+    assert!(
+        err_msg.contains("Duplicate relation definition"),
+        "Error message MUST indicate duplicate relation: {}",
+        err_msg
+    );
 
     let _ = fs::remove_dir_all(&test_dir);
 }
@@ -228,11 +251,19 @@ fn test_stats_cli_invocation_and_json_mode() {
 
     // Text format stats
     let stats_text_res = commands::stats::run(&snapshot_path, "text", true, 3.0);
-    assert!(stats_text_res.is_ok(), "stats (text) failed: {:?}", stats_text_res);
+    assert!(
+        stats_text_res.is_ok(),
+        "stats (text) failed: {:?}",
+        stats_text_res
+    );
 
     // JSON format stats
     let stats_json_res = commands::stats::run(&snapshot_path, "json", false, 3.0);
-    assert!(stats_json_res.is_ok(), "stats (json) failed: {:?}", stats_json_res);
+    assert!(
+        stats_json_res.is_ok(),
+        "stats (json) failed: {:?}",
+        stats_json_res
+    );
 
     let _ = fs::remove_dir_all(&test_dir);
 }

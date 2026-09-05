@@ -92,7 +92,9 @@ fn test_parquet_compile_nodes_edges_attributes() {
     assert_eq!(rel_meta.edge_count, 3);
     assert_eq!(rel_meta.attributes.len(), 2);
 
-    let age_data = reader.get_domain_attribute_data(0, "age").expect("domain attribute 'age' should be present");
+    let age_data = reader
+        .get_domain_attribute_data(0, "age")
+        .expect("domain attribute 'age' should be present");
     assert_eq!(age_data.len(), 12);
     let val0 = i32::from_le_bytes(age_data[0..4].try_into().unwrap());
     let val1 = i32::from_le_bytes(age_data[4..8].try_into().unwrap());
@@ -152,9 +154,7 @@ fn test_parquet_compile_full_spectrum_vectors_and_inspect() {
     // 1. Write nodes.parquet
     let item_field = Arc::new(Field::new("item", DataType::Float32, false));
     let emb_values = Arc::new(Float32Array::from(vec![
-        0.1f32, 0.2, 0.3,
-        1.1, 1.2, 1.3,
-        2.1, 2.2, 2.3,
+        0.1f32, 0.2, 0.3, 1.1, 1.2, 1.3, 2.1, 2.2, 2.3,
     ]));
     let emb_list = FixedSizeListArray::new(item_field.clone(), 3, emb_values, None);
 
@@ -168,7 +168,11 @@ fn test_parquet_compile_full_spectrum_vectors_and_inspect() {
     let opt_ages: ArrayRef = Arc::new(Int32Array::from(vec![Some(25), None, Some(35)]));
     let embeddings: ArrayRef = Arc::new(emb_list);
 
-    write_parquet_file(&node_file, node_schema, vec![user_ids, opt_ages, embeddings]);
+    write_parquet_file(
+        &node_file,
+        node_schema,
+        vec![user_ids, opt_ages, embeddings],
+    );
 
     // 2. Write edges.parquet
     let edge_schema = Arc::new(Schema::new(vec![

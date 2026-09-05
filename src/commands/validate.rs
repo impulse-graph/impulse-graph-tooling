@@ -49,7 +49,7 @@ pub fn run(
     if strict_alignment {
         let data = fs::read(file)?;
         let ptr_addr = data.as_ptr() as usize;
-        if ptr_addr % 128 != 0 {
+        if !ptr_addr.is_multiple_of(128) {
             println!("  [WARNING] File buffer memory address is not 128-byte aligned in RAM");
         } else {
             println!("  [OK] 128-byte hardware memory alignment verified");
@@ -87,13 +87,17 @@ pub fn run(
                 return Err(format!(
                     "Relation #{}: CSR row offsets offset 0x{:X} is not 128-byte aligned",
                     idx, rel.csr_row_off_offset
-                ).into());
+                )
+                .into());
             }
             if rel.csr_row_off_offset + rel.csr_row_off_bytes > file_len {
                 return Err(format!(
                     "Relation #{}: CSR row offsets end 0x{:X} exceeds file length {}",
-                    idx, rel.csr_row_off_offset + rel.csr_row_off_bytes, file_len
-                ).into());
+                    idx,
+                    rel.csr_row_off_offset + rel.csr_row_off_bytes,
+                    file_len
+                )
+                .into());
             }
         }
 
@@ -103,13 +107,17 @@ pub fn run(
                 return Err(format!(
                     "Relation #{}: CSR column indices offset 0x{:X} is not 128-byte aligned",
                     idx, rel.csr_col_idx_offset
-                ).into());
+                )
+                .into());
             }
             if rel.csr_col_idx_offset + rel.csr_col_idx_bytes > file_len {
                 return Err(format!(
                     "Relation #{}: CSR column indices end 0x{:X} exceeds file length {}",
-                    idx, rel.csr_col_idx_offset + rel.csr_col_idx_bytes, file_len
-                ).into());
+                    idx,
+                    rel.csr_col_idx_offset + rel.csr_col_idx_bytes,
+                    file_len
+                )
+                .into());
             }
         }
 
@@ -119,13 +127,17 @@ pub fn run(
                 return Err(format!(
                     "Relation #{}: CSC row offsets offset 0x{:X} is not 128-byte aligned",
                     idx, rel.csc_row_off_offset
-                ).into());
+                )
+                .into());
             }
             if rel.csc_row_off_offset + rel.csc_row_off_bytes > file_len {
                 return Err(format!(
                     "Relation #{}: CSC row offsets end 0x{:X} exceeds file length {}",
-                    idx, rel.csc_row_off_offset + rel.csc_row_off_bytes, file_len
-                ).into());
+                    idx,
+                    rel.csc_row_off_offset + rel.csc_row_off_bytes,
+                    file_len
+                )
+                .into());
             }
         }
         if rel.csc_col_idx_offset > 0 {
@@ -133,13 +145,17 @@ pub fn run(
                 return Err(format!(
                     "Relation #{}: CSC column indices offset 0x{:X} is not 128-byte aligned",
                     idx, rel.csc_col_idx_offset
-                ).into());
+                )
+                .into());
             }
             if rel.csc_col_idx_offset + rel.csc_col_idx_bytes > file_len {
                 return Err(format!(
                     "Relation #{}: CSC column indices end 0x{:X} exceeds file length {}",
-                    idx, rel.csc_col_idx_offset + rel.csc_col_idx_bytes, file_len
-                ).into());
+                    idx,
+                    rel.csc_col_idx_offset + rel.csc_col_idx_bytes,
+                    file_len
+                )
+                .into());
             }
         }
 
@@ -150,13 +166,18 @@ pub fn run(
                     return Err(format!(
                         "Relation #{} Attr #{}: Data offset 0x{:X} is not 128-byte aligned",
                         idx, a_idx, attr.data_offset
-                    ).into());
+                    )
+                    .into());
                 }
                 if attr.data_offset + attr.data_bytes > file_len {
                     return Err(format!(
                         "Relation #{} Attr #{}: Data end 0x{:X} exceeds file length {}",
-                        idx, a_idx, attr.data_offset + attr.data_bytes, file_len
-                    ).into());
+                        idx,
+                        a_idx,
+                        attr.data_offset + attr.data_bytes,
+                        file_len
+                    )
+                    .into());
                 }
             }
             if attr.offsets_offset > 0 {
@@ -164,13 +185,18 @@ pub fn run(
                     return Err(format!(
                         "Relation #{} Attr #{}: Offsets offset 0x{:X} is not 128-byte aligned",
                         idx, a_idx, attr.offsets_offset
-                    ).into());
+                    )
+                    .into());
                 }
                 if attr.offsets_offset + attr.offsets_bytes > file_len {
                     return Err(format!(
                         "Relation #{} Attr #{}: Offsets end 0x{:X} exceeds file length {}",
-                        idx, a_idx, attr.offsets_offset + attr.offsets_bytes, file_len
-                    ).into());
+                        idx,
+                        a_idx,
+                        attr.offsets_offset + attr.offsets_bytes,
+                        file_len
+                    )
+                    .into());
                 }
             }
         }
@@ -231,18 +257,25 @@ pub fn run(
                 return Err(format!(
                     "Index #{}: Data offset 0x{:X} is not 128-byte hardware aligned",
                     idx_entry.index_id, idx_entry.data_offset
-                ).into());
+                )
+                .into());
             }
             if idx_entry.data_offset + idx_entry.data_bytes > file_len {
                 return Err(format!(
                     "Index #{}: Data end 0x{:X} exceeds file length {}",
-                    idx_entry.index_id, idx_entry.data_offset + idx_entry.data_bytes, file_len
-                ).into());
+                    idx_entry.index_id,
+                    idx_entry.data_offset + idx_entry.data_bytes,
+                    file_len
+                )
+                .into());
             }
         }
     }
     if !reader.index_entries().is_empty() {
-        println!("  [OK] Section 2.6 Index Directory Table ({} indexes) validated & 128B aligned", reader.index_entries().len());
+        println!(
+            "  [OK] Section 2.6 Index Directory Table ({} indexes) validated & 128B aligned",
+            reader.index_entries().len()
+        );
     }
 
     println!("  [OK] CSR & CSC Topology arrays, SoA attributes 128B alignment & bounds verified");
@@ -260,10 +293,12 @@ pub fn run(
         let file_data = fs::read(file)?;
         let _digest = sha2::Sha256::digest(&file_data[..64]);
 
-        println!("  [OK] Ed25519 signature verified with key {}", pub_key_path.display());
+        println!(
+            "  [OK] Ed25519 signature verified with key {}",
+            pub_key_path.display()
+        );
     }
 
     println!("SUCCESS: Snapshot validation passed cleanly with 0 errors.");
     Ok(())
 }
-

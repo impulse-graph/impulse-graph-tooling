@@ -1,7 +1,5 @@
 use comfy_table::Table;
-use impulse_graph::spec::{
-    IMPULSE_FEAT_4KB_PAGE_ALIGNED, IMPULSE_FEAT_CRYPTO_SIGNED,
-};
+use impulse_graph::spec::{IMPULSE_FEAT_4KB_PAGE_ALIGNED, IMPULSE_FEAT_CRYPTO_SIGNED};
 use impulse_graph::SnapshotReader;
 use serde_json::json;
 use std::error::Error;
@@ -86,7 +84,10 @@ pub fn run(file: &Path, format: &str, verbose: bool) -> Result<(), Box<dyn Error
         format!("0.9.0 (0x{:04X})", header.version())
     };
     println!("Version:           {}", version_str);
-    println!("Required Features: {}", format_required_features(header.required_features()));
+    println!(
+        "Required Features: {}",
+        format_required_features(header.required_features())
+    );
     println!("Domains:           {}", header.domain_count());
     println!("Relations:         {}", header.relation_count());
     println!();
@@ -127,7 +128,11 @@ pub fn run(file: &Path, format: &str, verbose: bool) -> Result<(), Box<dyn Error
         };
         rel_table.add_row(vec![
             r.relation_id.to_string(),
-            if r.name.is_empty() { format!("rel_{}_{}", r.src_domain_id, r.tgt_domain_id) } else { r.name.clone() },
+            if r.name.is_empty() {
+                format!("rel_{}_{}", r.src_domain_id, r.tgt_domain_id)
+            } else {
+                r.name.clone()
+            },
             r.src_domain_id.to_string(),
             r.tgt_domain_id.to_string(),
             format!("0x{:02X}", r.encoding_id),
@@ -145,14 +150,28 @@ pub fn run(file: &Path, format: &str, verbose: bool) -> Result<(), Box<dyn Error
         println!();
         println!("--- SECTION 2.6 INDEX DIRECTORY TABLE ---");
         let mut idx_table = Table::new();
-        idx_table.set_header(vec!["Index ID", "Domain ID", "Rel ID", "Attr Index", "Type Code", "Index Name", "Data Bytes"]);
+        idx_table.set_header(vec![
+            "Index ID",
+            "Domain ID",
+            "Rel ID",
+            "Attr Index",
+            "Type Code",
+            "Index Name",
+            "Data Bytes",
+        ]);
         for idx in reader.index_entries() {
             let rel_str = if idx.relation_id == 0xFFFF {
                 format!("NODE (Dom #{})", idx.domain_id)
             } else {
-                let rel_info = reader.relations().iter().find(|r| r.relation_id == idx.relation_id);
+                let rel_info = reader
+                    .relations()
+                    .iter()
+                    .find(|r| r.relation_id == idx.relation_id);
                 if let Some(r) = rel_info {
-                    format!("EDGE (Rel #{}: Dom #{}->#{})", idx.relation_id, r.src_domain_id, r.tgt_domain_id)
+                    format!(
+                        "EDGE (Rel #{}: Dom #{}->#{})",
+                        idx.relation_id, r.src_domain_id, r.tgt_domain_id
+                    )
                 } else {
                     format!("EDGE (Rel #{})", idx.relation_id)
                 }
@@ -179,7 +198,11 @@ pub fn run(file: &Path, format: &str, verbose: bool) -> Result<(), Box<dyn Error
                 r.relation_id, r.name, r.csr_row_off_offset, r.csr_row_off_bytes, r.csr_col_idx_offset, r.csr_col_idx_bytes
             );
             for a in &r.attributes {
-                let nullability = if (a.type_code & 0x80) != 0 { "[Nullable]" } else { "[Non-Null]" };
+                let nullability = if (a.type_code & 0x80) != 0 {
+                    "[Nullable]"
+                } else {
+                    "[Non-Null]"
+                };
                 let base_type = a.type_code & 0x7F;
                 println!(
                     "    Attribute '{}': type_code=0x{:02X} {}, base_type=0x{:02X}, dim={}, data_offset=0x{:X} ({} B)",

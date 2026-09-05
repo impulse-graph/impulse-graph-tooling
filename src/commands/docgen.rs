@@ -25,7 +25,10 @@ pub fn run(man_dir: &Path, website_cli_md: Option<&Path>) -> Result<(), Box<dyn 
         let man_path = man_dir.join(&man_filename);
         let mut sub_file = File::create(&man_path)?;
         Man::new(subcmd.clone()).render(&mut sub_file)?;
-        println!("  [OK] Rendered subcommand man page: {}", man_path.display());
+        println!(
+            "  [OK] Rendered subcommand man page: {}",
+            man_path.display()
+        );
     }
 
     // 2. Generate MkDocs Markdown for website if requested
@@ -46,7 +49,10 @@ pub fn run(man_dir: &Path, website_cli_md: Option<&Path>) -> Result<(), Box<dyn 
         )?;
 
         let root_cmd = Cli::command();
-        writeln!(md_file, "## Global Usage\n```bash\nimpulse <COMMAND> [OPTIONS]\n```\n")?;
+        writeln!(
+            md_file,
+            "## Global Usage\n```bash\nimpulse <COMMAND> [OPTIONS]\n```\n"
+        )?;
 
         writeln!(md_file, "## Subcommands\n")?;
         for subcmd in root_cmd.get_subcommands() {
@@ -100,7 +106,10 @@ pub fn run(man_dir: &Path, website_cli_md: Option<&Path>) -> Result<(), Box<dyn 
             writeln!(md_file, "---")?;
         }
 
-        println!("  [OK] Rendered website CLI markdown: {}", md_path.display());
+        println!(
+            "  [OK] Rendered website CLI markdown: {}",
+            md_path.display()
+        );
     }
 
     println!("SUCCESS: Automated documentation generation complete.");

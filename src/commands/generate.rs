@@ -107,7 +107,10 @@ pub fn run(args: &GenerateArgs) -> Result<(), Box<dyn Error>> {
     let edge_count = graph.edges.len();
     println!("  Vertices Total:  {}", total_nodes);
     println!("  Edges Total:     {}", edge_count);
-    println!("  Generation Time: {:.3}s", start_time.elapsed().as_secs_f64());
+    println!(
+        "  Generation Time: {:.3}s",
+        start_time.elapsed().as_secs_f64()
+    );
 
     let attr_specs = parse_attribute_specs(args.attributes.as_deref());
 
@@ -131,7 +134,11 @@ pub fn run(args: &GenerateArgs) -> Result<(), Box<dyn Error>> {
     }
 
     println!("------------------------------------------------------------");
-    println!("  SUCCESS: Generated {} in {:.3}s", args.output.display(), start_time.elapsed().as_secs_f64());
+    println!(
+        "  SUCCESS: Generated {} in {:.3}s",
+        args.output.display(),
+        start_time.elapsed().as_secs_f64()
+    );
     println!("============================================================");
 
     Ok(())
@@ -148,7 +155,10 @@ fn generate_graph500(args: &GenerateArgs, seed: u64) -> Result<GeneratedGraph, B
     let edge_factor = args.edge_factor as u64;
     let target_edges = args.edges.unwrap_or(num_nodes.saturating_mul(edge_factor));
 
-    println!("  Scale Factor S:  {} (N = 2^{} = {} vertices)", scale, scale, num_nodes);
+    println!(
+        "  Scale Factor S:  {} (N = 2^{} = {} vertices)",
+        scale, scale, num_nodes
+    );
     println!("  Edge Factor E:   {}", edge_factor);
     println!("  Target Edges:    {}", target_edges);
 
@@ -168,15 +178,23 @@ fn generate_graph500(args: &GenerateArgs, seed: u64) -> Result<GeneratedGraph, B
     let thresh_b = prob_a + prob_b;
     let thresh_c = prob_a + prob_b + prob_c;
 
-    println!("  R-MAT Matrix:    [A={:.3}, B={:.3}; C={:.3}, D={:.3}]", prob_a, prob_b, prob_c, 1.0 - thresh_c);
+    println!(
+        "  R-MAT Matrix:    [A={:.3}, B={:.3}; C={:.3}, D={:.3}]",
+        prob_a,
+        prob_b,
+        prob_c,
+        1.0 - thresh_c
+    );
 
     let num_threads = rayon::current_num_threads();
-    let chunk_size = (target_edges as usize + num_threads - 1) / num_threads;
+    let chunk_size = (target_edges as usize).div_ceil(num_threads);
 
     let raw_edges: Vec<Edge> = (0..num_threads)
         .into_par_iter()
         .flat_map(|thread_id| {
-            let mut thread_rng = StdRng::seed_from_u64(seed.wrapping_add((thread_id as u64).wrapping_mul(0x9E3779B97F4A7C15)));
+            let mut thread_rng = StdRng::seed_from_u64(
+                seed.wrapping_add((thread_id as u64).wrapping_mul(0x9E3779B97F4A7C15)),
+            );
             let start_idx = (thread_id * chunk_size) as u64;
             let count = if start_idx >= target_edges {
                 0
@@ -184,7 +202,8 @@ fn generate_graph500(args: &GenerateArgs, seed: u64) -> Result<GeneratedGraph, B
                 std::cmp::min(chunk_size as u64, target_edges - start_idx)
             };
 
-            let mut thread_edges = Vec::with_capacity(count as usize * if args.undirected { 2 } else { 1 });
+            let mut thread_edges =
+                Vec::with_capacity(count as usize * if args.undirected { 2 } else { 1 });
 
             for _ in 0..count {
                 let mut u = 0u32;
@@ -311,12 +330,14 @@ fn generate_social_sbm(args: &GenerateArgs, seed: u64) -> Result<GeneratedGraph,
     println!("  P(inter):        {:.5}", p_inter);
 
     let num_threads = rayon::current_num_threads();
-    let chunk = (num_nodes as usize + num_threads - 1) / num_threads;
+    let chunk = (num_nodes as usize).div_ceil(num_threads);
 
     let edges: Vec<Edge> = (0..num_threads)
         .into_par_iter()
         .flat_map(|thread_id| {
-            let mut thread_rng = StdRng::seed_from_u64(seed.wrapping_add((thread_id as u64).wrapping_mul(0x85EBCA6B)));
+            let mut thread_rng = StdRng::seed_from_u64(
+                seed.wrapping_add((thread_id as u64).wrapping_mul(0x85EBCA6B)),
+            );
             let start_u = (thread_id * chunk) as u32;
             let end_u = std::cmp::min(num_nodes as u32, start_u + chunk as u32);
 
@@ -376,12 +397,14 @@ fn generate_erdos_renyi(args: &GenerateArgs, seed: u64) -> Result<GeneratedGraph
     println!("  Target Edges M:  {}", target_edges);
 
     let num_threads = rayon::current_num_threads();
-    let chunk = (target_edges as usize + num_threads - 1) / num_threads;
+    let chunk = (target_edges as usize).div_ceil(num_threads);
 
     let edges: Vec<Edge> = (0..num_threads)
         .into_par_iter()
         .flat_map(|thread_id| {
-            let mut thread_rng = StdRng::seed_from_u64(seed.wrapping_add((thread_id as u64).wrapping_mul(0xC2B2AE35)));
+            let mut thread_rng = StdRng::seed_from_u64(
+                seed.wrapping_add((thread_id as u64).wrapping_mul(0xC2B2AE35)),
+            );
             let start = (thread_id * chunk) as u64;
             let count = if start >= target_edges {
                 0
@@ -389,7 +412,8 @@ fn generate_erdos_renyi(args: &GenerateArgs, seed: u64) -> Result<GeneratedGraph
                 std::cmp::min(chunk as u64, target_edges - start)
             };
 
-            let mut thread_edges = Vec::with_capacity(count as usize * if args.undirected { 2 } else { 1 });
+            let mut thread_edges =
+                Vec::with_capacity(count as usize * if args.undirected { 2 } else { 1 });
 
             for _ in 0..count {
                 let mut u = thread_rng.gen_range(0..num_nodes as u32);
@@ -450,7 +474,7 @@ fn generate_grid(args: &GenerateArgs) -> Result<GeneratedGraph, Box<dyn Error>> 
                         edges.push(Edge { src: v, tgt: u });
                     }
                 } else if toroidal && dim_x > 1 {
-                    let v = z * (dim_x * dim_y) + y * dim_x + 0;
+                    let v = z * (dim_x * dim_y) + y * dim_x;
                     edges.push(Edge { src: u, tgt: v });
                     if args.undirected {
                         edges.push(Edge { src: v, tgt: u });
@@ -465,7 +489,7 @@ fn generate_grid(args: &GenerateArgs) -> Result<GeneratedGraph, Box<dyn Error>> 
                         edges.push(Edge { src: v, tgt: u });
                     }
                 } else if toroidal && dim_y > 1 {
-                    let v = z * (dim_x * dim_y) + 0 * dim_x + x;
+                    let v = z * (dim_x * dim_y) + x;
                     edges.push(Edge { src: u, tgt: v });
                     if args.undirected {
                         edges.push(Edge { src: v, tgt: u });
@@ -481,7 +505,7 @@ fn generate_grid(args: &GenerateArgs) -> Result<GeneratedGraph, Box<dyn Error>> 
                             edges.push(Edge { src: v, tgt: u });
                         }
                     } else if toroidal {
-                        let v = 0 * (dim_x * dim_y) + y * dim_x + x;
+                        let v = y * dim_x + x;
                         edges.push(Edge { src: u, tgt: v });
                         if args.undirected {
                             edges.push(Edge { src: v, tgt: u });
@@ -508,7 +532,8 @@ fn generate_tree(args: &GenerateArgs) -> Result<GeneratedGraph, Box<dyn Error>> 
     if args.star {
         let num_nodes = args.nodes.unwrap_or(1000);
         println!("  Star Topology:   Center 0 -> Leaves 1..{}", num_nodes - 1);
-        let mut edges = Vec::with_capacity((num_nodes - 1) as usize * if args.undirected { 2 } else { 1 });
+        let mut edges =
+            Vec::with_capacity((num_nodes - 1) as usize * if args.undirected { 2 } else { 1 });
         for v in 1..num_nodes as u32 {
             edges.push(Edge { src: 0, tgt: v });
             if args.undirected {
@@ -527,7 +552,7 @@ fn generate_tree(args: &GenerateArgs) -> Result<GeneratedGraph, Box<dyn Error>> 
     }
 
     let k = std::cmp::max(2, args.branching as u64);
-    let depth = args.depth as u32;
+    let depth = args.depth;
 
     // Total nodes = (k^(depth+1) - 1) / (k - 1)
     let mut total_nodes: u64 = 0;
@@ -573,17 +598,25 @@ fn generate_bipartite(args: &GenerateArgs, seed: u64) -> Result<GeneratedGraph, 
     let tgt_nodes = args.tgt_nodes.unwrap_or(5_000);
     let target_edges = args.edges.unwrap_or(src_nodes * 10);
 
-    println!("  Domain 0 (Src):  {} vertices ({})", src_nodes, args.domain_name);
-    println!("  Domain 1 (Tgt):  {} vertices ({})", tgt_nodes, args.tgt_domain_name);
+    println!(
+        "  Domain 0 (Src):  {} vertices ({})",
+        src_nodes, args.domain_name
+    );
+    println!(
+        "  Domain 1 (Tgt):  {} vertices ({})",
+        tgt_nodes, args.tgt_domain_name
+    );
     println!("  Target Edges:    {}", target_edges);
 
     let num_threads = rayon::current_num_threads();
-    let chunk = (target_edges as usize + num_threads - 1) / num_threads;
+    let chunk = (target_edges as usize).div_ceil(num_threads);
 
     let edges: Vec<Edge> = (0..num_threads)
         .into_par_iter()
         .flat_map(|thread_id| {
-            let mut thread_rng = StdRng::seed_from_u64(seed.wrapping_add((thread_id as u64).wrapping_mul(0x27D4EB2F)));
+            let mut thread_rng = StdRng::seed_from_u64(
+                seed.wrapping_add((thread_id as u64).wrapping_mul(0x27D4EB2F)),
+            );
             let start = (thread_id * chunk) as u64;
             let count = if start >= target_edges {
                 0
@@ -625,7 +658,12 @@ fn write_imps_snapshot(
     println!("  Constructing Spec v0.9.0 binary snapshot...");
     let mut writer = SnapshotWriter::new(output_path.to_str().unwrap_or("snapshot.imps"));
 
-    for (d_id, (name, &size)) in graph.domain_names.iter().zip(graph.domain_sizes.iter()).enumerate() {
+    for (d_id, (name, &size)) in graph
+        .domain_names
+        .iter()
+        .zip(graph.domain_sizes.iter())
+        .enumerate()
+    {
         writer.add_domain(d_id as u16, KeyType::Int64, name);
         writer.set_domain_node_count(d_id as u16, size);
     }
@@ -673,26 +711,30 @@ fn write_imps_snapshot(
     for attr in attr_specs {
         let mut data_bytes = Vec::new();
         match attr.type_code {
-            1 => { // i32
+            1 => {
+                // i32
                 for _ in 0..edge_count {
                     let v: i32 = rng.gen_range(0..10);
                     data_bytes.extend_from_slice(&v.to_le_bytes());
                 }
             }
-            2 => { // i64 timestamp
+            2 => {
+                // i64 timestamp
                 let base_ts = 1700000000i64;
                 for _ in 0..edge_count {
                     let v: i64 = base_ts + rng.gen_range(0..10_000_000);
                     data_bytes.extend_from_slice(&v.to_le_bytes());
                 }
             }
-            3 => { // f32 weight
+            3 => {
+                // f32 weight
                 for _ in 0..edge_count {
                     let v: f32 = rng.gen_range(0.01..100.0);
                     data_bytes.extend_from_slice(&v.to_le_bytes());
                 }
             }
-            4 => { // f64 weight
+            4 => {
+                // f64 weight
                 for _ in 0..edge_count {
                     let v: f64 = rng.gen_range(0.01..100.0);
                     data_bytes.extend_from_slice(&v.to_le_bytes());
@@ -701,7 +743,14 @@ fn write_imps_snapshot(
             _ => {}
         }
 
-        writer.add_attribute_to_relation(0, &attr.name, attr.type_code, attr.dimension, data_bytes, None);
+        writer.add_attribute_to_relation(
+            0,
+            &attr.name,
+            attr.type_code,
+            attr.dimension,
+            data_bytes,
+            None,
+        );
     }
 
     // Build minimal domain lookup hash index
@@ -737,7 +786,10 @@ fn write_delimited(
     attr_specs: &[AttributeSpec],
     seed: u64,
 ) -> Result<(), Box<dyn Error>> {
-    println!("  Writing delimited text file to {}...", output_path.display());
+    println!(
+        "  Writing delimited text file to {}...",
+        output_path.display()
+    );
     let file = File::create(output_path)?;
     let mut writer = BufWriter::new(file);
 

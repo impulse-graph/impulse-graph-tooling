@@ -1,9 +1,9 @@
 use arrow_array::{
-    Array, BinaryArray, BooleanArray, Date32Array, Date64Array, FixedSizeListArray,
-    Float16Array, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array,
-    Int8Array, LargeBinaryArray, LargeStringArray, StringArray, TimestampMicrosecondArray,
-    TimestampMillisecondArray, TimestampNanosecondArray, TimestampSecondArray,
-    UInt16Array, UInt32Array, UInt64Array, UInt8Array,
+    Array, BinaryArray, BooleanArray, Date32Array, Date64Array, FixedSizeListArray, Float16Array,
+    Float32Array, Float64Array, Int16Array, Int32Array, Int64Array, Int8Array, LargeBinaryArray,
+    LargeStringArray, StringArray, TimestampMicrosecondArray, TimestampMillisecondArray,
+    TimestampNanosecondArray, TimestampSecondArray, UInt16Array, UInt32Array, UInt64Array,
+    UInt8Array,
 };
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use std::collections::HashMap;
@@ -25,8 +25,12 @@ pub struct NativeColumn {
 
 pub fn parse_type_code(s: &str) -> u8 {
     let s_clean = s.trim().to_lowercase();
-    let is_nullable = s_clean.ends_with('?') || s_clean.starts_with("nullable_") || s_clean.starts_with("opt_");
-    let name = s_clean.trim_end_matches('?').trim_start_matches("nullable_").trim_start_matches("opt_");
+    let is_nullable =
+        s_clean.ends_with('?') || s_clean.starts_with("nullable_") || s_clean.starts_with("opt_");
+    let name = s_clean
+        .trim_end_matches('?')
+        .trim_start_matches("nullable_")
+        .trim_start_matches("opt_");
 
     let base: u8 = match name {
         "int8" | "i8" | "uint8" | "u8" | "bool" | "boolean" => 0x01,
@@ -55,7 +59,7 @@ pub fn parse_type_code(s: &str) -> u8 {
 
 pub fn build_padded_validity_bitmap(is_valid: &[bool]) -> Vec<u8> {
     let count = is_valid.len();
-    let word_count = (count + 63) / 64;
+    let word_count = count.div_ceil(64);
     let mut words = vec![0u64; word_count];
     for (i, &valid) in is_valid.iter().enumerate() {
         if valid {
@@ -241,13 +245,21 @@ pub fn read_parquet_column_data(
                 } else if let Some(arr) = array.as_any().downcast_ref::<BooleanArray>() {
                     acc.inferred_base_type = 0x01;
                     for i in 0..len {
-                        let v = if arr.is_null(i) { 0u8 } else { arr.value(i) as u8 };
+                        let v = if arr.is_null(i) {
+                            0u8
+                        } else {
+                            arr.value(i) as u8
+                        };
                         acc.payload_bytes.push(v);
                     }
                 } else if let Some(arr) = array.as_any().downcast_ref::<Float16Array>() {
                     acc.inferred_base_type = 0x05;
                     for i in 0..len {
-                        let v = if arr.is_null(i) { 0u16 } else { arr.value(i).to_bits() };
+                        let v = if arr.is_null(i) {
+                            0u16
+                        } else {
+                            arr.value(i).to_bits()
+                        };
                         acc.payload_bytes.extend_from_slice(&v.to_le_bytes());
                     }
                 } else if let Some(arr) = array.as_any().downcast_ref::<Date32Array>() {
@@ -262,7 +274,8 @@ pub fn read_parquet_column_data(
                         let v = if arr.is_null(i) { 0i64 } else { arr.value(i) };
                         acc.payload_bytes.extend_from_slice(&v.to_le_bytes());
                     }
-                } else if let Some(arr) = array.as_any().downcast_ref::<TimestampMillisecondArray>() {
+                } else if let Some(arr) = array.as_any().downcast_ref::<TimestampMillisecondArray>()
+                {
                     acc.inferred_base_type = 0x08;
                     for i in 0..len {
                         let v = if arr.is_null(i) { 0i64 } else { arr.value(i) };
@@ -271,16 +284,26 @@ pub fn read_parquet_column_data(
                 } else if let Some(arr) = array.as_any().downcast_ref::<TimestampSecondArray>() {
                     acc.inferred_base_type = 0x08;
                     for i in 0..len {
-                        let v = if arr.is_null(i) { 0i64 } else { arr.value(i) * 1000 };
+                        let v = if arr.is_null(i) {
+                            0i64
+                        } else {
+                            arr.value(i) * 1000
+                        };
                         acc.payload_bytes.extend_from_slice(&v.to_le_bytes());
                     }
-                } else if let Some(arr) = array.as_any().downcast_ref::<TimestampMicrosecondArray>() {
+                } else if let Some(arr) = array.as_any().downcast_ref::<TimestampMicrosecondArray>()
+                {
                     acc.inferred_base_type = 0x09;
                     for i in 0..len {
-                        let v = if arr.is_null(i) { 0i64 } else { arr.value(i) * 1000 };
+                        let v = if arr.is_null(i) {
+                            0i64
+                        } else {
+                            arr.value(i) * 1000
+                        };
                         acc.payload_bytes.extend_from_slice(&v.to_le_bytes());
                     }
-                } else if let Some(arr) = array.as_any().downcast_ref::<TimestampNanosecondArray>() {
+                } else if let Some(arr) = array.as_any().downcast_ref::<TimestampNanosecondArray>()
+                {
                     acc.inferred_base_type = 0x09;
                     for i in 0..len {
                         let v = if arr.is_null(i) { 0i64 } else { arr.value(i) };
@@ -347,7 +370,11 @@ pub fn read_parquet_column_data(
                         for i in 0..len {
                             for d in 0..dim as usize {
                                 let idx = i * (dim as usize) + d;
-                                let v = if f32s.is_null(idx) { 0.0f32 } else { f32s.value(idx) };
+                                let v = if f32s.is_null(idx) {
+                                    0.0f32
+                                } else {
+                                    f32s.value(idx)
+                                };
                                 acc.payload_bytes.extend_from_slice(&v.to_le_bytes());
                             }
                         }
@@ -356,7 +383,11 @@ pub fn read_parquet_column_data(
                         for i in 0..len {
                             for d in 0..dim as usize {
                                 let idx = i * (dim as usize) + d;
-                                let v = if f64s.is_null(idx) { 0.0f64 } else { f64s.value(idx) };
+                                let v = if f64s.is_null(idx) {
+                                    0.0f64
+                                } else {
+                                    f64s.value(idx)
+                                };
                                 acc.payload_bytes.extend_from_slice(&v.to_le_bytes());
                             }
                         }
@@ -365,7 +396,11 @@ pub fn read_parquet_column_data(
                         for i in 0..len {
                             for d in 0..dim as usize {
                                 let idx = i * (dim as usize) + d;
-                                let v = if i32s.is_null(idx) { 0i32 } else { i32s.value(idx) };
+                                let v = if i32s.is_null(idx) {
+                                    0i32
+                                } else {
+                                    i32s.value(idx)
+                                };
                                 acc.payload_bytes.extend_from_slice(&v.to_le_bytes());
                             }
                         }
@@ -447,7 +482,9 @@ pub fn read_text_column_data(
         } else {
             trimmed.split_whitespace().collect()
         };
-        columns.iter().any(|&(col_name, _, _)| tokens.iter().any(|t| t.trim() == col_name))
+        columns
+            .iter()
+            .any(|&(col_name, _, _)| tokens.iter().any(|t| t.trim() == col_name))
     };
 
     let mut csv_reader = csv::ReaderBuilder::new()
@@ -504,45 +541,54 @@ pub fn read_text_column_data(
         let null_count = vals.iter().filter(|v| v.is_none()).count();
 
         let req_tc = req_type_str.map(parse_type_code);
-        let is_nullable = req_tc
-            .map(|tc| (tc & 0x80) != 0)
-            .unwrap_or(null_count > 0);
+        let is_nullable = req_tc.map(|tc| (tc & 0x80) != 0).unwrap_or(null_count > 0);
         let base_type = req_tc.map(|tc| tc & 0x7F).unwrap_or(0x03); // Default to INT32
         let dimension = dim_opt.unwrap_or(1);
 
         let mut is_valid = Vec::with_capacity(row_count);
         let mut payload_bytes = Vec::new();
-        let mut string_offsets = if base_type == 0x0B { Some(vec![0]) } else { None };
+        let mut string_offsets = if base_type == 0x0B {
+            Some(vec![0])
+        } else {
+            None
+        };
 
         for val_opt in vals {
             is_valid.push(val_opt.is_some());
             let s = val_opt.as_deref().unwrap_or("");
             match base_type {
-                0x01 => { // Int8
+                0x01 => {
+                    // Int8
                     let v: i8 = s.parse().unwrap_or(0);
                     payload_bytes.push(v as u8);
                 }
-                0x02 => { // Int16
+                0x02 => {
+                    // Int16
                     let v: i16 = s.parse().unwrap_or(0);
                     payload_bytes.extend_from_slice(&v.to_le_bytes());
                 }
-                0x03 => { // Int32
+                0x03 => {
+                    // Int32
                     let v: i32 = s.parse().unwrap_or(0);
                     payload_bytes.extend_from_slice(&v.to_le_bytes());
                 }
-                0x04 => { // Int64
+                0x04 => {
+                    // Int64
                     let v: i64 = s.parse().unwrap_or(0);
                     payload_bytes.extend_from_slice(&v.to_le_bytes());
                 }
-                0x06 => { // Float32
+                0x06 => {
+                    // Float32
                     let v: f32 = s.parse().unwrap_or(0.0);
                     payload_bytes.extend_from_slice(&v.to_le_bytes());
                 }
-                0x07 => { // Float64
+                0x07 => {
+                    // Float64
                     let v: f64 = s.parse().unwrap_or(0.0);
                     payload_bytes.extend_from_slice(&v.to_le_bytes());
                 }
-                0x0B => { // String
+                0x0B => {
+                    // String
                     payload_bytes.extend_from_slice(s.as_bytes());
                     payload_bytes.push(0);
                     if let Some(ref mut offs) = string_offsets {
@@ -556,7 +602,11 @@ pub fn read_text_column_data(
             }
         }
 
-        let final_type_code = if is_nullable { base_type | 0x80 } else { base_type };
+        let final_type_code = if is_nullable {
+            base_type | 0x80
+        } else {
+            base_type
+        };
         let final_data = if is_nullable {
             let mut buf = build_padded_validity_bitmap(&is_valid);
             buf.extend_from_slice(&payload_bytes);

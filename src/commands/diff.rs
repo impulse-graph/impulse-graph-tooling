@@ -80,8 +80,12 @@ pub fn run(base_path: &Path, target_path: &Path) -> Result<(), Box<dyn Error>> {
         let base_rel = base.relations().get(i);
         let target_rel = target.relations().get(i);
 
-        let base_nodes = base_rel.map(|r| r.node_count.to_string()).unwrap_or_else(|| "-".into());
-        let target_nodes = target_rel.map(|r| r.node_count.to_string()).unwrap_or_else(|| "-".into());
+        let base_nodes = base_rel
+            .map(|r| r.node_count.to_string())
+            .unwrap_or_else(|| "-".into());
+        let target_nodes = target_rel
+            .map(|r| r.node_count.to_string())
+            .unwrap_or_else(|| "-".into());
 
         let base_edges = base_rel.map(|r| r.edge_count).unwrap_or(0);
         let target_edges = target_rel.map(|r| r.edge_count).unwrap_or(0);

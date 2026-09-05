@@ -1,6 +1,6 @@
 use crate::parquet_reader::{
-    build_padded_validity_bitmap, read_parquet_column_data,
-    read_parquet_id_strings, read_text_column_data, NativeColumn,
+    build_padded_validity_bitmap, read_parquet_column_data, read_parquet_id_strings,
+    read_text_column_data, NativeColumn,
 };
 use impulse_graph::spec::KeyType;
 use impulse_graph::SnapshotWriter;
@@ -102,7 +102,7 @@ fn reorder_native_column(col: &NativeColumn, permutation: &[usize]) -> NativeCol
     let new_count = permutation.len();
 
     let (old_bitmap_words, raw_payload) = if is_nullable {
-        let word_count = (old_count + 63) / 64;
+        let word_count = old_count.div_ceil(64);
         let raw_bitmap_bytes = word_count * 8;
         let padded_bitmap_bytes = if raw_bitmap_bytes == 0 {
             0
@@ -259,7 +259,10 @@ fn read_text_id_strings(
 
         let target_idx = if has_headers {
             let headers = csv_reader.headers()?.clone();
-            headers.iter().position(|h| h.trim() == id_col_name).unwrap_or(0)
+            headers
+                .iter()
+                .position(|h| h.trim() == id_col_name)
+                .unwrap_or(0)
         } else {
             0
         };
@@ -305,7 +308,9 @@ fn read_text_edge_endpoints(
         } else {
             trimmed.split_whitespace().collect()
         };
-        tokens.iter().any(|t| t.trim() == src_col || t.trim() == tgt_col)
+        tokens
+            .iter()
+            .any(|t| t.trim() == src_col || t.trim() == tgt_col)
     };
 
     if delimiter == b' ' && !has_headers {
@@ -336,8 +341,14 @@ fn read_text_edge_endpoints(
         let (src_idx, tgt_idx) = if has_headers {
             let headers = csv_reader.headers()?.clone();
             (
-                headers.iter().position(|h| h.trim() == src_col).unwrap_or(0),
-                headers.iter().position(|h| h.trim() == tgt_col).unwrap_or(1),
+                headers
+                    .iter()
+                    .position(|h| h.trim() == src_col)
+                    .unwrap_or(0),
+                headers
+                    .iter()
+                    .position(|h| h.trim() == tgt_col)
+                    .unwrap_or(1),
             )
         } else {
             (0, 1)
@@ -360,7 +371,10 @@ pub fn run(manifest_path: &Path, output_path: &Path) -> Result<(), Box<dyn Error
     let is_stdout = output_path.to_str() == Some("-") || output_path.to_str() == Some("stdout");
 
     if !is_stdout {
-        println!("Compiling snapshot using manifest: {}...", manifest_path.display());
+        println!(
+            "Compiling snapshot using manifest: {}...",
+            manifest_path.display()
+        );
     }
 
     let manifest_str = fs::read_to_string(manifest_path)?;
@@ -573,7 +587,10 @@ pub fn run(manifest_path: &Path, output_path: &Path) -> Result<(), Box<dyn Error
 
     // Add domain metadata to SnapshotWriter
     for d in &manifest.domains {
-        let node_count = domain_node_maps.get(&d.id).map(|m| m.len() as u64).unwrap_or(0);
+        let node_count = domain_node_maps
+            .get(&d.id)
+            .map(|m| m.len() as u64)
+            .unwrap_or(0);
         writer.add_domain(d.id, parse_key_type(&d.key_type), &d.name);
         writer.set_domain_node_count(d.id, node_count);
     }

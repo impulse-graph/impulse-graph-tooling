@@ -3,11 +3,7 @@ use std::error::Error;
 use std::fs;
 use std::path::Path;
 
-pub fn run(
-    input: &Path,
-    output: Option<&Path>,
-    _emit_ir: bool,
-) -> Result<(), Box<dyn Error>> {
+pub fn run(input: &Path, output: Option<&Path>, _emit_ir: bool) -> Result<(), Box<dyn Error>> {
     let source = fs::read_to_string(input)?;
 
     let target = match input.extension().and_then(|ext| ext.to_str()) {

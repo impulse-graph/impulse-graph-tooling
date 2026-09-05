@@ -1,7 +1,7 @@
+use impulse_graph::ffi::impulse_instruction_t;
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
-use impulse_graph::ffi::impulse_instruction_t;
 
 fn get_opcode_name(opcode: u8) -> &'static str {
     match opcode {
@@ -131,14 +131,39 @@ fn get_opcode_name(opcode: u8) -> &'static str {
         0x94 => "OP_COALESCE_BITSET",
         0x95 => "OP_COALESCE_DENSE_ARRAY",
 
-        0x0A => "OP_RESERVED_0A", 0x0B => "OP_RESERVED_0B", 0x0C => "OP_RESERVED_0C", 0x0D => "OP_RESERVED_0D", 0x0E => "OP_RESERVED_0E", 0x0F => "OP_RESERVED_0F",
-        0x28 => "OP_RESERVED_28", 0x29 => "OP_RESERVED_29", 0x2B => "OP_RESERVED_2B", 0x2C => "OP_RESERVED_2C",
-        0x3E => "OP_RESERVED_3E", 0x3F => "OP_RESERVED_3F",
-        0x4C => "OP_RESERVED_4C", 0x4D => "OP_RESERVED_4D", 0x4E => "OP_RESERVED_4E", 0x4F => "OP_RESERVED_4F",
+        0x0A => "OP_RESERVED_0A",
+        0x0B => "OP_RESERVED_0B",
+        0x0C => "OP_RESERVED_0C",
+        0x0D => "OP_RESERVED_0D",
+        0x0E => "OP_RESERVED_0E",
+        0x0F => "OP_RESERVED_0F",
+        0x28 => "OP_RESERVED_28",
+        0x29 => "OP_RESERVED_29",
+        0x2B => "OP_RESERVED_2B",
+        0x2C => "OP_RESERVED_2C",
+        0x3E => "OP_RESERVED_3E",
+        0x3F => "OP_RESERVED_3F",
+        0x4C => "OP_RESERVED_4C",
+        0x4D => "OP_RESERVED_4D",
+        0x4E => "OP_RESERVED_4E",
+        0x4F => "OP_RESERVED_4F",
         0x59 => "OP_RESERVED_59",
-        0x5D => "OP_RESERVED_5D", 0x5E => "OP_RESERVED_5E", 0x5F => "OP_RESERVED_5F",
-        0x6D => "OP_RESERVED_6D", 0x6E => "OP_RESERVED_6E", 0x6F => "OP_RESERVED_6F",
-        0x76 => "OP_RESERVED_76", 0x77 => "OP_RESERVED_77", 0x78 => "OP_RESERVED_78", 0x79 => "OP_RESERVED_79", 0x7A => "OP_RESERVED_7A", 0x7B => "OP_RESERVED_7B", 0x7C => "OP_RESERVED_7C", 0x7D => "OP_RESERVED_7D", 0x7E => "OP_RESERVED_7E", 0x7F => "OP_RESERVED_7F",
+        0x5D => "OP_RESERVED_5D",
+        0x5E => "OP_RESERVED_5E",
+        0x5F => "OP_RESERVED_5F",
+        0x6D => "OP_RESERVED_6D",
+        0x6E => "OP_RESERVED_6E",
+        0x6F => "OP_RESERVED_6F",
+        0x76 => "OP_RESERVED_76",
+        0x77 => "OP_RESERVED_77",
+        0x78 => "OP_RESERVED_78",
+        0x79 => "OP_RESERVED_79",
+        0x7A => "OP_RESERVED_7A",
+        0x7B => "OP_RESERVED_7B",
+        0x7C => "OP_RESERVED_7C",
+        0x7D => "OP_RESERVED_7D",
+        0x7E => "OP_RESERVED_7E",
+        0x7F => "OP_RESERVED_7F",
         _ => "OP_UNKNOWN",
     }
 }
@@ -186,10 +211,18 @@ pub fn run(input_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
 
         let op_name = get_opcode_name(instr.opcode);
         let mut flags_parts = Vec::new();
-        if instr.flags & 0x01 != 0 { flags_parts.push("BITSET"); }
-        if instr.flags & 0x02 != 0 { flags_parts.push("ACCUMULATE"); }
-        if instr.flags & 0x04 != 0 { flags_parts.push("INVERT"); }
-        if instr.flags & 0x08 != 0 { flags_parts.push("OFFHEAP"); }
+        if instr.flags & 0x01 != 0 {
+            flags_parts.push("BITSET");
+        }
+        if instr.flags & 0x02 != 0 {
+            flags_parts.push("ACCUMULATE");
+        }
+        if instr.flags & 0x04 != 0 {
+            flags_parts.push("INVERT");
+        }
+        if instr.flags & 0x08 != 0 {
+            flags_parts.push("OFFHEAP");
+        }
         let flags_str = if flags_parts.is_empty() {
             "0".to_string()
         } else {
@@ -205,7 +238,7 @@ pub fn run(input_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
                 // OP_NOP, OP_RET, OP_HALT
             }
             // Jumps / branches (rel offset in payload)
-            0x50 | 0x51 | 0x52 => {
+            0x50..=0x52 => {
                 // OP_JMP, OP_JZ, OP_JNZ
                 let offset = instr.payload as i32;
                 output_str.push_str(&format!("{:+}", offset));
@@ -244,7 +277,13 @@ pub fn run(input_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
                 let src1 = instr.payload & 0xFF;
                 let src2 = (instr.payload >> 8) & 0xFF;
                 let op_id = (instr.payload >> 16) & 0xFFFF;
-                output_str.push_str(&format!("R{}, R{}, R{}, {}", instr.dst_reg, src1, src2, get_binary_op_name(op_id)));
+                output_str.push_str(&format!(
+                    "R{}, R{}, R{}, {}",
+                    instr.dst_reg,
+                    src1,
+                    src2,
+                    get_binary_op_name(op_id)
+                ));
             }
             // Vector Division: num_reg (lower 16) and denom_reg (upper 16)
             0x36 => {
@@ -258,7 +297,12 @@ pub fn run(input_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
                 // OP_REDUCE
                 let src = instr.payload & 0xFF;
                 let op_id = (instr.payload >> 16) & 0xFFFF;
-                output_str.push_str(&format!("R{}, R{}, {}", instr.dst_reg, src, get_binary_op_name(op_id)));
+                output_str.push_str(&format!(
+                    "R{}, R{}, {}",
+                    instr.dst_reg,
+                    src,
+                    get_binary_op_name(op_id)
+                ));
             }
             // SpMV: src_vec (byte 0), rel_id (byte 1), semiring_id (byte 2)
             0x41 | 0x42 => {
@@ -266,18 +310,30 @@ pub fn run(input_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
                 let src = instr.payload & 0xFF;
                 let rel = (instr.payload >> 8) & 0xFF;
                 let semiring = (instr.payload >> 16) & 0xFFFF;
-                output_str.push_str(&format!("R{}, R{}, REL_{}, {}", instr.dst_reg, src, rel, get_semiring_name(semiring)));
+                output_str.push_str(&format!(
+                    "R{}, R{}, REL_{}, {}",
+                    instr.dst_reg,
+                    src,
+                    rel,
+                    get_semiring_name(semiring)
+                ));
             }
             // Island Detect: src1 (byte 0), src2 (byte 1), rel_id (byte 2)
             0x65 => {
                 let src1 = instr.payload & 0xFF;
                 let src2 = (instr.payload >> 8) & 0xFF;
                 let rel = (instr.payload >> 16) & 0xFFFF;
-                output_str.push_str(&format!("R{}, R{}, R{}, REL_{}", instr.dst_reg, src1, src2, rel));
+                output_str.push_str(&format!(
+                    "R{}, R{}, R{}, REL_{}",
+                    instr.dst_reg, src1, src2, rel
+                ));
             }
             _ => {
                 // Default fallback
-                output_str.push_str(&format!("R{}, flags={}, payload=0x{:08X}", instr.dst_reg, flags_str, instr.payload));
+                output_str.push_str(&format!(
+                    "R{}, flags={}, payload=0x{:08X}",
+                    instr.dst_reg, flags_str, instr.payload
+                ));
             }
         }
 

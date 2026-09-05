@@ -40,7 +40,7 @@ pub fn run(
         let row_offsets = reader.get_row_offsets(r_idx)?;
         let mut degree_sketch = DegreeDistributionSketch::new(10_000);
         let n = rel.node_count as usize;
-        if row_offsets.len() >= n + 1 {
+        if row_offsets.len() > n {
             for i in 0..n {
                 let deg = row_offsets[i + 1].saturating_sub(row_offsets[i]);
                 degree_sketch.offer(deg);
@@ -64,7 +64,11 @@ pub fn run(
                 };
 
                 // Build CBO Sketch for attribute
-                if attr.type_code == 1 || attr.type_code == 2 || attr.type_code == 3 || attr.type_code == 4 {
+                if attr.type_code == 1
+                    || attr.type_code == 2
+                    || attr.type_code == 3
+                    || attr.type_code == 4
+                {
                     let mut hll = HyperLogLogSketch::new(10);
                     let mut hist = EquiDepthHistogramBuilder::new(10_000);
 
@@ -199,7 +203,10 @@ pub fn run(
     println!("File Size:         {} bytes", metadata.len());
     println!("Domains:           {}", header.domain_count());
     println!("Relations:         {}", header.relation_count());
-    println!("Calculation Time:  {:.2} ms", start_time.elapsed().as_secs_f64() * 1000.0);
+    println!(
+        "Calculation Time:  {:.2} ms",
+        start_time.elapsed().as_secs_f64() * 1000.0
+    );
     println!();
 
     // 1. Relation Structural Multiplicity & Cardinality Table
@@ -225,10 +232,20 @@ pub fn run(
         };
 
         let mut traits = Vec::new();
-        if s.is_functional() { traits.push("Functional"); }
-        if s.is_injective() { traits.push("Injective"); }
-        if s.is_bijective() { traits.push("Bijective"); }
-        let trait_str = if traits.is_empty() { "None".to_string() } else { traits.join(", ") };
+        if s.is_functional() {
+            traits.push("Functional");
+        }
+        if s.is_injective() {
+            traits.push("Injective");
+        }
+        if s.is_bijective() {
+            traits.push("Bijective");
+        }
+        let trait_str = if traits.is_empty() {
+            "None".to_string()
+        } else {
+            traits.join(", ")
+        };
 
         rel_table.add_row(vec![
             Cell::new(idx.to_string()),
@@ -261,7 +278,11 @@ pub fn run(
     ]);
 
     for (idx, (name, s)) in rel_stats_list.iter().enumerate() {
-        let super_str = format!("{} ({:.2}%)", s.supernode_count, (s.supernode_count as f64 / s.node_count.max(1) as f64) * 100.0);
+        let super_str = format!(
+            "{} ({:.2}%)",
+            s.supernode_count,
+            (s.supernode_count as f64 / s.node_count.max(1) as f64) * 100.0
+        );
         deg_table.add_row(vec![
             Cell::new(idx.to_string()),
             Cell::new(name.clone()),
@@ -271,8 +292,16 @@ pub fn run(
             Cell::new(s.max_in_degree.to_string()),
             Cell::new(s.p50_degree.to_string()),
             Cell::new(s.p90_degree.to_string()),
-            Cell::new(s.p99_degree.to_string()).fg(if s.p99_degree > 100 { Color::Yellow } else { Color::White }),
-            Cell::new(super_str).fg(if s.supernode_count > 0 { Color::Cyan } else { Color::White }),
+            Cell::new(s.p99_degree.to_string()).fg(if s.p99_degree > 100 {
+                Color::Yellow
+            } else {
+                Color::White
+            }),
+            Cell::new(super_str).fg(if s.supernode_count > 0 {
+                Color::Cyan
+            } else {
+                Color::White
+            }),
         ]);
     }
     println!("{}", deg_table);
@@ -296,7 +325,10 @@ pub fn run(
         for (rel_idx, (rel_name, _)) in rel_stats_list.iter().enumerate() {
             for a in &attr_stats_list[rel_idx] {
                 let (min_str, max_str) = if a.min_float_val != 0.0 || a.max_float_val != 0.0 {
-                    (format!("{:.4}", a.min_float_val), format!("{:.4}", a.max_float_val))
+                    (
+                        format!("{:.4}", a.min_float_val),
+                        format!("{:.4}", a.max_float_val),
+                    )
                 } else {
                     (a.min_int_val.to_string(), a.max_int_val.to_string())
                 };
@@ -310,7 +342,13 @@ pub fn run(
                     Cell::new(max_str),
                     Cell::new(a.distinct_count.to_string()),
                     Cell::new(a.null_count.to_string()),
-                    Cell::new(mono_str).fg(if a.monotonicity != impulse_graph::stats::Monotonicity::None { Color::Green } else { Color::White }),
+                    Cell::new(mono_str).fg(
+                        if a.monotonicity != impulse_graph::stats::Monotonicity::None {
+                            Color::Green
+                        } else {
+                            Color::White
+                        },
+                    ),
                 ]);
             }
         }

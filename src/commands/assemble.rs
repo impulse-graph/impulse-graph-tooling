@@ -1,8 +1,8 @@
+use impulse_graph::ffi::impulse_instruction_t;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
-use impulse_graph::ffi::impulse_instruction_t;
 
 fn get_opcode(name: &str) -> Option<u8> {
     match name {
@@ -146,7 +146,7 @@ pub fn run(input_path: &Path, output_path: &Path) -> Result<(), Box<dyn std::err
 
     let mut symbols: HashMap<String, u32> = HashMap::new();
     let mut labels: HashMap<String, usize> = HashMap::new();
-    
+
     struct RawInstruction {
         opcode_str: String,
         flags_str: String,
@@ -162,7 +162,7 @@ pub fn run(input_path: &Path, output_path: &Path) -> Result<(), Box<dyn std::err
         let line_num = idx + 1;
         let line = line_res?;
         let trimmed = line.trim();
-        
+
         // Skip comments and empty lines
         if trimmed.is_empty() || trimmed.starts_with(';') {
             continue;
@@ -182,7 +182,7 @@ pub fn run(input_path: &Path, output_path: &Path) -> Result<(), Box<dyn std::err
                 let symbol_name = parts[1].replace('"', "");
                 let value_str = parts[3].trim_end_matches(',');
                 let value = value_str.parse::<u32>()?;
-                
+
                 match directive {
                     ".domain" => {
                         symbols.insert(format!("DOMAIN_{}", symbol_name.to_uppercase()), value);
@@ -196,7 +196,11 @@ pub fn run(input_path: &Path, output_path: &Path) -> Result<(), Box<dyn std::err
                         symbols.insert(format!("ATTR_{}", symbol_name.to_uppercase()), value);
                         symbols.insert(symbol_name.clone(), value);
                     }
-                    _ => return Err(format!("Unknown directive {} at line {}", directive, line_num).into()),
+                    _ => {
+                        return Err(
+                            format!("Unknown directive {} at line {}", directive, line_num).into(),
+                        )
+                    }
                 }
             }
             continue;
@@ -228,10 +232,14 @@ pub fn run(input_path: &Path, output_path: &Path) -> Result<(), Box<dyn std::err
         }
 
         let opcode_str = parts[0].to_string();
-        
+
         // Parse operands
         let args_str = parts[1..].join(" ");
-        let args: Vec<&str> = args_str.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+        let args: Vec<&str> = args_str
+            .split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
 
         let mut flags_str = "0".to_string();
         let mut dst_str = "0".to_string();
@@ -275,7 +283,13 @@ pub fn run(input_path: &Path, output_path: &Path) -> Result<(), Box<dyn std::err
                     dst_str = args[0].to_string();
                     payload_str = format!("{} | {} | {}", args[1], args[2], args[3]);
                 }
-                _ => return Err(format!("Invalid number of arguments in: {} at line {}", instr_text, line_num).into()),
+                _ => {
+                    return Err(format!(
+                        "Invalid number of arguments in: {} at line {}",
+                        instr_text, line_num
+                    )
+                    .into())
+                }
             }
         }
 
@@ -294,7 +308,10 @@ pub fn run(input_path: &Path, output_path: &Path) -> Result<(), Box<dyn std::err
 
     for (current_pc, raw) in raw_program.iter().enumerate() {
         let opcode = get_opcode(&raw.opcode_str).ok_or_else(|| {
-            format!("Invalid opcode: {} at line {}", raw.opcode_str, raw.line_num)
+            format!(
+                "Invalid opcode: {} at line {}",
+                raw.opcode_str, raw.line_num
+            )
         })?;
 
         let flags = parse_flags(&raw.flags_str)?;
@@ -315,14 +332,17 @@ pub fn run(input_path: &Path, output_path: &Path) -> Result<(), Box<dyn std::err
 
     let mut out_file = File::create(output_path)?;
     out_file.write_all(&compiled_bytes)?;
-    println!("Assembled successfully: {} instructions -> {:?}", raw_program.len(), output_path);
+    println!(
+        "Assembled successfully: {} instructions -> {:?}",
+        raw_program.len(),
+        output_path
+    );
     Ok(())
 }
 
 fn is_register_str(s: &str) -> bool {
     let trimmed = s.trim().to_uppercase();
-    if trimmed.starts_with('R') {
-        let num_str = &trimmed[1..];
+    if let Some(num_str) = trimmed.strip_prefix('R') {
         !num_str.is_empty() && num_str.chars().all(|c| c.is_ascii_digit())
     } else {
         trimmed.parse::<u16>().is_ok()
@@ -334,8 +354,7 @@ fn parse_register(s: &str) -> Result<u16, Box<dyn std::error::Error>> {
     if trimmed.is_empty() {
         return Ok(0);
     }
-    if trimmed.starts_with('R') {
-        let num_str = &trimmed[1..];
+    if let Some(num_str) = trimmed.strip_prefix('R') {
         if num_str.chars().all(|c| c.is_ascii_digit()) {
             if let Ok(reg) = num_str.parse::<u16>() {
                 if reg < 64 {
@@ -366,8 +385,8 @@ fn parse_flags(s: &str) -> Result<u8, Box<dyn std::error::Error>> {
             "FLAG_INVERT" | "INVERT" => val |= 0x04,
             "FLAG_OFFHEAP" | "OFFHEAP" => val |= 0x08,
             _ => {
-                if part.starts_with("0X") {
-                    if let Ok(num) = u8::from_str_radix(&part[2..], 16) {
+                if let Some(hex_part) = part.strip_prefix("0X") {
+                    if let Ok(num) = u8::from_str_radix(hex_part, 16) {
                         val |= num;
                         continue;
                     }
@@ -402,7 +421,8 @@ fn resolve_single_val(
     if let Some(v) = lookup_constant(trimmed) {
         return Ok(v);
     }
-    if trimmed.starts_with("REL_") || trimmed.starts_with("DOMAIN_") || trimmed.starts_with("ATTR_") {
+    if trimmed.starts_with("REL_") || trimmed.starts_with("DOMAIN_") || trimmed.starts_with("ATTR_")
+    {
         let suffix = trimmed
             .trim_start_matches("REL_")
             .trim_start_matches("DOMAIN_")
@@ -423,7 +443,8 @@ fn parse_payload(
 ) -> Result<u32, Box<dyn std::error::Error>> {
     let parts: Vec<&str> = s.split('|').map(|x| x.trim()).collect();
 
-    if opcode == 0x18 { // OP_CSC_WALK
+    if opcode == 0x18 {
+        // OP_CSC_WALK
         if parts.len() == 2 {
             let src = parse_register(parts[0])? as u32;
             let rel = resolve_single_val(parts[1], symbols)?;
