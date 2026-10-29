@@ -19,6 +19,7 @@ pub struct Cli {
 }
 
 #[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)]
 pub enum Commands {
     /// Execute compiled bytecode query (.impb) or script against a binary snapshot (.imps)
     Run {
@@ -194,6 +195,7 @@ pub enum CompilerCommands {
 }
 
 #[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)]
 pub enum SnapshotCommands {
     /// Build zero-copy binary snapshot (.imps) from dataset manifest (Snapshots Only)
     Build {
@@ -389,7 +391,12 @@ pub struct GenerateArgs {
     pub profile: String,
 
     /// Destination output path (.imps, .tsv, .csv)
-    #[arg(short = 'o', long, default_value = "generated_graph.imps", value_name = "OUTPUT")]
+    #[arg(
+        short = 'o',
+        long,
+        default_value = "generated_graph.imps",
+        value_name = "OUTPUT"
+    )]
     pub output: PathBuf,
 
     /// Output serialization format: imps, tsv, csv
@@ -527,4 +534,3 @@ pub struct GenerateArgs {
     #[arg(long, default_value_t = 5_000_000, value_name = "BATCH_SIZE")]
     pub chunk_size: usize,
 }
-

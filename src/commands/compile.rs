@@ -1,4 +1,7 @@
-use crate::parquet_reader::read_parquet_columns;
+use crate::parquet_reader::{
+    build_padded_validity_bitmap, read_parquet_column_data, read_parquet_id_strings,
+    read_text_column_data, NativeColumn,
+};
 use impulse_graph::spec::KeyType;
 use impulse_graph::SnapshotWriter;
 use serde::Deserialize;
@@ -52,24 +55,13 @@ struct RelationDef {
     attributes: Option<Vec<AttributeDef>>,
 }
 
-
 fn parse_key_type(s: &str) -> KeyType {
-    match s.to_lowercase().as_str() {
-        "string" | "str" => KeyType::String,
-        "uint64" | "u64" | "int64" | "i64" => KeyType::Int64,
-        "uuid" => KeyType::Uuid,
+    match s.trim().to_lowercase().as_str() {
+        "string" | "str" | "utf8" | "text" | "var_string" => KeyType::String,
+        "uint64" | "u64" | "int64" | "i64" | "long" => KeyType::Int64,
+        "uuid" | "fixed_bytes" => KeyType::Uuid,
+        "uint16" | "u16" | "int16" | "i16" => KeyType::Int32,
         _ => KeyType::Int32,
-    }
-}
-
-fn parse_type_code(s: &str) -> u8 {
-    match s.to_lowercase().as_str() {
-        "int32" | "i32" | "uint32" | "u32" => 1,
-        "int64" | "i64" | "uint64" | "u64" => 2,
-        "float32" | "f32" | "float" => 3,
-        "float64" | "f64" | "double" => 4,
-        "string" | "str" | "utf8" => 5,
-        _ => 1,
     }
 }
 
@@ -86,11 +78,306 @@ fn is_parquet_file(file_path: &Path, format_opt: Option<&str>) -> bool {
     false
 }
 
+fn base_type_element_size(base_type: u8, dimension: u32) -> usize {
+    let base_size = match base_type {
+        0x01 => 1, // INT8
+        0x02 => 2, // INT16
+        0x03 => 4, // INT32
+        0x04 => 8, // INT64
+        0x05 => 2, // FLOAT16
+        0x06 => 4, // FLOAT32
+        0x07 => 8, // FLOAT64
+        0x08 => 8, // TIMESTAMP_MS
+        0x09 => 8, // TIMESTAMP_NS
+        0x0A => 1, // FIXED_BYTES
+        _ => 4,
+    };
+    base_size * (dimension as usize)
+}
+
+fn reorder_native_column(col: &NativeColumn, permutation: &[usize]) -> NativeColumn {
+    let is_nullable = (col.type_code & 0x80) != 0;
+    let base_type = col.type_code & 0x7F;
+    let old_count = col.row_count;
+    let new_count = permutation.len();
+
+    let (old_bitmap_words, raw_payload) = if is_nullable {
+        let word_count = old_count.div_ceil(64);
+        let raw_bitmap_bytes = word_count * 8;
+        let padded_bitmap_bytes = if raw_bitmap_bytes == 0 {
+            0
+        } else {
+            (raw_bitmap_bytes + 127) & !127
+        };
+        let words: Vec<u64> = col.data[..raw_bitmap_bytes]
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .copied()
+            .map(u64::from_le_bytes)
+            .collect();
+        (Some(words), &col.data[padded_bitmap_bytes..])
+    } else {
+        (None, &col.data[..])
+    };
+
+    let new_valid_flags: Vec<bool> = if let Some(ref words) = old_bitmap_words {
+        permutation
+            .iter()
+            .map(|&orig| {
+                if orig < old_count {
+                    (words[orig / 64] & (1u64 << (orig % 64))) != 0
+                } else {
+                    false
+                }
+            })
+            .collect()
+    } else {
+        vec![true; new_count]
+    };
+
+    let new_null_count = new_valid_flags.iter().filter(|&&v| !v).count();
+
+    if base_type == 0x0B || base_type == 0x0C {
+        let old_offsets = col.offsets.as_deref().unwrap_or(&[]);
+        let mut new_offsets = vec![0u32];
+        let mut new_payload = Vec::new();
+
+        for &orig in permutation {
+            if orig + 1 < old_offsets.len() {
+                let start = old_offsets[orig] as usize;
+                let end = old_offsets[orig + 1] as usize;
+                if start <= end && end <= raw_payload.len() {
+                    new_payload.extend_from_slice(&raw_payload[start..end]);
+                }
+            } else {
+                new_payload.push(0);
+            }
+            new_offsets.push(new_payload.len() as u32);
+        }
+
+        let final_data = if is_nullable {
+            let mut buf = build_padded_validity_bitmap(&new_valid_flags);
+            buf.extend_from_slice(&new_payload);
+            buf
+        } else {
+            new_payload
+        };
+
+        NativeColumn {
+            name: col.name.clone(),
+            type_code: col.type_code,
+            dimension: col.dimension,
+            data: final_data,
+            offsets: Some(new_offsets),
+            null_count: new_null_count,
+            row_count: new_count,
+        }
+    } else {
+        let elem_size = base_type_element_size(base_type, col.dimension);
+        let mut new_payload = Vec::with_capacity(new_count * elem_size);
+        let empty_elem = vec![0u8; elem_size];
+
+        for &orig in permutation {
+            let start = orig * elem_size;
+            let end = start + elem_size;
+            if end <= raw_payload.len() {
+                new_payload.extend_from_slice(&raw_payload[start..end]);
+            } else {
+                new_payload.extend_from_slice(&empty_elem);
+            }
+        }
+
+        let final_data = if is_nullable {
+            let mut buf = build_padded_validity_bitmap(&new_valid_flags);
+            buf.extend_from_slice(&new_payload);
+            buf
+        } else {
+            new_payload
+        };
+
+        NativeColumn {
+            name: col.name.clone(),
+            type_code: col.type_code,
+            dimension: col.dimension,
+            data: final_data,
+            offsets: None,
+            null_count: new_null_count,
+            row_count: new_count,
+        }
+    }
+}
+
+fn read_text_id_strings(
+    file_path: &Path,
+    id_col_name: &str,
+) -> Result<Vec<String>, Box<dyn Error>> {
+    let file = File::open(file_path)?;
+    let mut reader = BufReader::new(file);
+    let mut first_line = String::new();
+    reader.read_line(&mut first_line)?;
+
+    let delimiter = if first_line.contains('\t') {
+        b'\t'
+    } else if first_line.contains(',') {
+        b','
+    } else {
+        b' '
+    };
+
+    let has_headers = {
+        let trimmed = first_line.trim();
+        let tokens: Vec<&str> = if delimiter == b'\t' {
+            trimmed.split('\t').collect()
+        } else if delimiter == b',' {
+            trimmed.split(',').collect()
+        } else {
+            trimmed.split_whitespace().collect()
+        };
+        tokens.iter().any(|t| t.trim() == id_col_name)
+    };
+
+    if delimiter == b' ' && !has_headers {
+        let file = File::open(file_path)?;
+        let reader = BufReader::new(file);
+        let mut ids = Vec::new();
+        for line_res in reader.lines() {
+            let line = line_res?;
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+            let parts: Vec<&str> = trimmed.split_whitespace().collect();
+            if !parts.is_empty() {
+                ids.push(parts[0].to_string());
+            }
+        }
+        Ok(ids)
+    } else {
+        let mut csv_reader = csv::ReaderBuilder::new()
+            .delimiter(delimiter)
+            .has_headers(has_headers)
+            .flexible(true)
+            .from_path(file_path)?;
+
+        let target_idx = if has_headers {
+            let headers = csv_reader.headers()?.clone();
+            headers
+                .iter()
+                .position(|h| h.trim() == id_col_name)
+                .unwrap_or(0)
+        } else {
+            0
+        };
+
+        let mut ids = Vec::new();
+        for rec in csv_reader.records() {
+            let record = rec?;
+            if let Some(val) = record.get(target_idx) {
+                let trimmed = val.trim();
+                if !trimmed.is_empty() {
+                    ids.push(trimmed.to_string());
+                }
+            }
+        }
+        Ok(ids)
+    }
+}
+
+fn read_text_edge_endpoints(
+    file_path: &Path,
+    src_col: &str,
+    tgt_col: &str,
+) -> Result<(Vec<String>, Vec<String>), Box<dyn Error>> {
+    let file = File::open(file_path)?;
+    let mut reader = BufReader::new(file);
+    let mut first_line = String::new();
+    reader.read_line(&mut first_line)?;
+
+    let delimiter = if first_line.contains('\t') {
+        b'\t'
+    } else if first_line.contains(',') {
+        b','
+    } else {
+        b' '
+    };
+
+    let has_headers = {
+        let trimmed = first_line.trim();
+        let tokens: Vec<&str> = if delimiter == b'\t' {
+            trimmed.split('\t').collect()
+        } else if delimiter == b',' {
+            trimmed.split(',').collect()
+        } else {
+            trimmed.split_whitespace().collect()
+        };
+        tokens
+            .iter()
+            .any(|t| t.trim() == src_col || t.trim() == tgt_col)
+    };
+
+    if delimiter == b' ' && !has_headers {
+        let file = File::open(file_path)?;
+        let reader = BufReader::new(file);
+        let mut srcs = Vec::new();
+        let mut tgts = Vec::new();
+        for line_res in reader.lines() {
+            let line = line_res?;
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+            let parts: Vec<&str> = trimmed.split_whitespace().collect();
+            if parts.len() >= 2 {
+                srcs.push(parts[0].to_string());
+                tgts.push(parts[1].to_string());
+            }
+        }
+        Ok((srcs, tgts))
+    } else {
+        let mut csv_reader = csv::ReaderBuilder::new()
+            .delimiter(delimiter)
+            .has_headers(has_headers)
+            .flexible(true)
+            .from_path(file_path)?;
+
+        let (src_idx, tgt_idx) = if has_headers {
+            let headers = csv_reader.headers()?.clone();
+            (
+                headers
+                    .iter()
+                    .position(|h| h.trim() == src_col)
+                    .unwrap_or(0),
+                headers
+                    .iter()
+                    .position(|h| h.trim() == tgt_col)
+                    .unwrap_or(1),
+            )
+        } else {
+            (0, 1)
+        };
+
+        let mut srcs = Vec::new();
+        let mut tgts = Vec::new();
+        for rec in csv_reader.records() {
+            let record = rec?;
+            if src_idx < record.len() && tgt_idx < record.len() {
+                srcs.push(record[src_idx].trim().to_string());
+                tgts.push(record[tgt_idx].trim().to_string());
+            }
+        }
+        Ok((srcs, tgts))
+    }
+}
+
 pub fn run(manifest_path: &Path, output_path: &Path) -> Result<(), Box<dyn Error>> {
     let is_stdout = output_path.to_str() == Some("-") || output_path.to_str() == Some("stdout");
 
     if !is_stdout {
-        println!("Compiling snapshot using manifest: {}...", manifest_path.display());
+        println!(
+            "Compiling snapshot using manifest: {}...",
+            manifest_path.display()
+        );
     }
 
     let manifest_str = fs::read_to_string(manifest_path)?;
@@ -106,6 +393,8 @@ pub fn run(manifest_path: &Path, output_path: &Path) -> Result<(), Box<dyn Error
     }
 
     // Process optional Domain files (for predefined nodes and node attributes)
+    let mut compiled_domain_attributes: HashMap<u16, Vec<NativeColumn>> = HashMap::new();
+
     for d in &manifest.domains {
         if let Some(ref file_name) = d.file {
             let domain_file_path = base_dir.join(file_name);
@@ -116,35 +405,50 @@ pub fn run(manifest_path: &Path, output_path: &Path) -> Result<(), Box<dyn Error
             let id_col = d.id_column.as_deref().unwrap_or("id");
 
             if is_parquet_file(&domain_file_path, d.format.as_deref()) {
-                let mut cols_to_read = vec![id_col.to_string()];
-                if let Some(ref attrs) = d.attributes {
-                    for attr in attrs {
-                        cols_to_read.push(attr.column.clone());
-                    }
+                let ids = read_parquet_id_strings(&domain_file_path, id_col)?;
+                let map = domain_node_maps.get_mut(&d.id).unwrap();
+                for key in ids {
+                    let next_idx = map.len() as u32;
+                    map.entry(key).or_insert(next_idx);
                 }
-                let data = read_parquet_columns(&domain_file_path, &cols_to_read)?;
-                if let Some(ids) = data.get(id_col) {
-                    let map = domain_node_maps.get_mut(&d.id).unwrap();
-                    for key in ids {
-                        let next_idx = map.len() as u32;
-                        map.entry(key.clone()).or_insert(next_idx);
+
+                if let Some(ref attrs) = d.attributes {
+                    let reqs: Vec<(&str, Option<&str>, Option<u32>)> = attrs
+                        .iter()
+                        .map(|a| (a.column.as_str(), a.type_name.as_deref(), a.dimension))
+                        .collect();
+                    let cols = read_parquet_column_data(&domain_file_path, &reqs)?;
+                    let mut domain_cols = Vec::new();
+                    for attr in attrs {
+                        if let Some(mut col) = cols.get(&attr.column).cloned() {
+                            col.name = attr.name.clone();
+                            domain_cols.push(col);
+                        }
                     }
+                    compiled_domain_attributes.insert(d.id, domain_cols);
                 }
             } else {
-                let file = File::open(&domain_file_path)?;
-                let reader = BufReader::new(file);
+                let id_strings = read_text_id_strings(&domain_file_path, id_col)?;
                 let map = domain_node_maps.get_mut(&d.id).unwrap();
-                for line_res in reader.lines() {
-                    let line = line_res?;
-                    let trimmed = line.trim();
-                    if trimmed.is_empty() || trimmed.starts_with('#') {
-                        continue;
+                for key in id_strings {
+                    let next_idx = map.len() as u32;
+                    map.entry(key).or_insert(next_idx);
+                }
+
+                if let Some(ref attrs) = d.attributes {
+                    let reqs: Vec<(&str, Option<&str>, Option<u32>)> = attrs
+                        .iter()
+                        .map(|a| (a.column.as_str(), a.type_name.as_deref(), a.dimension))
+                        .collect();
+                    let cols = read_text_column_data(&domain_file_path, &reqs)?;
+                    let mut domain_cols = Vec::new();
+                    for attr in attrs {
+                        if let Some(mut col) = cols.get(&attr.column).cloned() {
+                            col.name = attr.name.clone();
+                            domain_cols.push(col);
+                        }
                     }
-                    let parts: Vec<&str> = trimmed.split_whitespace().collect();
-                    if !parts.is_empty() {
-                        let next_idx = map.len() as u32;
-                        map.entry(parts[0].to_string()).or_insert(next_idx);
-                    }
+                    compiled_domain_attributes.insert(d.id, domain_cols);
                 }
             }
         }
@@ -169,7 +473,7 @@ pub fn run(manifest_path: &Path, output_path: &Path) -> Result<(), Box<dyn Error
         edges_count: u64,
         row_offsets: Vec<u32>,
         col_indices: Vec<u32>,
-        attributes: Vec<(String, u8, u32, Vec<u8>, Option<Vec<u32>>)>,
+        attributes: Vec<NativeColumn>,
     }
 
     let mut compiled_relations = Vec::new();
@@ -182,82 +486,63 @@ pub fn run(manifest_path: &Path, output_path: &Path) -> Result<(), Box<dyn Error
         }
 
         let mut edges: Vec<(u32, u32, usize)> = Vec::new(); // (src_idx, tgt_idx, original_row_index)
-        let mut attr_raw_values: HashMap<String, Vec<String>> = HashMap::new();
+        let mut raw_attr_cols: HashMap<String, NativeColumn> = HashMap::new();
+
+        let src_col = r.src_column.as_deref().unwrap_or("src");
+        let tgt_col = r.tgt_column.as_deref().unwrap_or("tgt");
 
         if is_parquet_file(&edge_file_path, r.format.as_deref()) {
-            let src_col = r.src_column.as_deref().unwrap_or("src");
-            let tgt_col = r.tgt_column.as_deref().unwrap_or("tgt");
-
-            let mut cols_to_read = vec![src_col.to_string(), tgt_col.to_string()];
-            if let Some(ref attrs) = r.attributes {
-                for attr in attrs {
-                    cols_to_read.push(attr.column.clone());
-                }
-            }
-
-            let pq_data = read_parquet_columns(&edge_file_path, &cols_to_read)?;
-            let src_keys = pq_data.get(src_col).ok_or("Missing src_column in Parquet file")?;
-            let tgt_keys = pq_data.get(tgt_col).ok_or("Missing tgt_column in Parquet file")?;
+            let src_keys = read_parquet_id_strings(&edge_file_path, src_col)?;
+            let tgt_keys = read_parquet_id_strings(&edge_file_path, tgt_col)?;
 
             for i in 0..src_keys.len() {
-                let src_key = &src_keys[i];
-                let tgt_key = &tgt_keys[i];
-
                 let src_idx = {
                     let src_map = domain_node_maps.get_mut(&r.src_domain).unwrap();
                     let next_idx = src_map.len() as u32;
-                    *src_map.entry(src_key.clone()).or_insert(next_idx)
+                    *src_map.entry(src_keys[i].clone()).or_insert(next_idx)
                 };
 
                 let tgt_idx = {
                     let tgt_map = domain_node_maps.get_mut(&r.tgt_domain).unwrap();
                     let next_idx = tgt_map.len() as u32;
-                    *tgt_map.entry(tgt_key.clone()).or_insert(next_idx)
+                    *tgt_map.entry(tgt_keys[i].clone()).or_insert(next_idx)
                 };
 
                 edges.push((src_idx, tgt_idx, i));
             }
 
             if let Some(ref attrs) = r.attributes {
-                for attr in attrs {
-                    if let Some(vals) = pq_data.get(&attr.column) {
-                        attr_raw_values.insert(attr.name.clone(), vals.clone());
-                    }
-                }
+                let reqs: Vec<(&str, Option<&str>, Option<u32>)> = attrs
+                    .iter()
+                    .map(|a| (a.column.as_str(), a.type_name.as_deref(), a.dimension))
+                    .collect();
+                raw_attr_cols = read_parquet_column_data(&edge_file_path, &reqs)?;
             }
         } else {
-            let file = File::open(&edge_file_path)?;
-            let reader = BufReader::new(file);
+            let (src_keys, tgt_keys) = read_text_edge_endpoints(&edge_file_path, src_col, tgt_col)?;
 
-            let mut row_idx = 0;
-            for line_res in reader.lines() {
-                let line = line_res?;
-                let trimmed = line.trim();
-                if trimmed.is_empty() || trimmed.starts_with('#') {
-                    continue;
-                }
-                let parts: Vec<&str> = trimmed.split_whitespace().collect();
-                if parts.len() < 2 {
-                    continue;
-                }
-
-                let src_key = parts[0].to_string();
-                let tgt_key = parts[1].to_string();
-
+            for i in 0..src_keys.len() {
                 let src_idx = {
                     let src_map = domain_node_maps.get_mut(&r.src_domain).unwrap();
                     let next_idx = src_map.len() as u32;
-                    *src_map.entry(src_key).or_insert(next_idx)
+                    *src_map.entry(src_keys[i].clone()).or_insert(next_idx)
                 };
 
                 let tgt_idx = {
                     let tgt_map = domain_node_maps.get_mut(&r.tgt_domain).unwrap();
                     let next_idx = tgt_map.len() as u32;
-                    *tgt_map.entry(tgt_key).or_insert(next_idx)
+                    *tgt_map.entry(tgt_keys[i].clone()).or_insert(next_idx)
                 };
 
-                edges.push((src_idx, tgt_idx, row_idx));
-                row_idx += 1;
+                edges.push((src_idx, tgt_idx, i));
+            }
+
+            if let Some(ref attrs) = r.attributes {
+                let reqs: Vec<(&str, Option<&str>, Option<u32>)> = attrs
+                    .iter()
+                    .map(|a| (a.column.as_str(), a.type_name.as_deref(), a.dimension))
+                    .collect();
+                raw_attr_cols = read_text_column_data(&edge_file_path, &reqs)?;
             }
         }
 
@@ -267,10 +552,12 @@ pub fn run(manifest_path: &Path, output_path: &Path) -> Result<(), Box<dyn Error
         let src_domain_count = domain_node_maps.get(&r.src_domain).unwrap().len() as u32;
         let mut row_offsets = vec![0u32; (src_domain_count + 1) as usize];
         let mut col_indices = Vec::with_capacity(edges.len());
+        let mut permutation = Vec::with_capacity(edges.len());
 
-        for &(src, tgt, _) in &edges {
+        for &(src, tgt, orig_idx) in &edges {
             row_offsets[(src + 1) as usize] += 1;
             col_indices.push(tgt);
+            permutation.push(orig_idx);
         }
 
         // Cumulative sum for row offsets
@@ -282,44 +569,11 @@ pub fn run(manifest_path: &Path, output_path: &Path) -> Result<(), Box<dyn Error
         let mut compiled_attrs = Vec::new();
         if let Some(ref attrs) = r.attributes {
             for attr in attrs {
-                let type_code = parse_type_code(attr.type_name.as_deref().unwrap_or("int32"));
-                let dim = attr.dimension.unwrap_or(1);
-                let mut data_bytes = Vec::new();
-                let mut string_offsets: Option<Vec<u32>> = if type_code == 5 { Some(vec![0]) } else { None };
-
-                if let Some(raw_vals) = attr_raw_values.get(&attr.name) {
-                    for &(_, _, original_idx) in &edges {
-                        let val_str = raw_vals.get(original_idx).cloned().unwrap_or_default();
-                        match type_code {
-                            1 => { // Int32
-                                let v: i32 = val_str.parse().unwrap_or(0);
-                                data_bytes.extend_from_slice(&v.to_le_bytes());
-                            }
-                            2 => { // Int64
-                                let v: i64 = val_str.parse().unwrap_or(0);
-                                data_bytes.extend_from_slice(&v.to_le_bytes());
-                            }
-                            3 => { // Float32
-                                let v: f32 = val_str.parse().unwrap_or(0.0);
-                                data_bytes.extend_from_slice(&v.to_le_bytes());
-                            }
-                            4 => { // Float64
-                                let v: f64 = val_str.parse().unwrap_or(0.0);
-                                data_bytes.extend_from_slice(&v.to_le_bytes());
-                            }
-                            5 => { // String
-                                data_bytes.extend_from_slice(val_str.as_bytes());
-                                data_bytes.push(0); // null-terminated
-                                if let Some(ref mut offs) = string_offsets {
-                                    offs.push(data_bytes.len() as u32);
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
+                if let Some(raw_col) = raw_attr_cols.get(&attr.column) {
+                    let mut reordered = reorder_native_column(raw_col, &permutation);
+                    reordered.name = attr.name.clone();
+                    compiled_attrs.push(reordered);
                 }
-
-                compiled_attrs.push((attr.name.clone(), type_code, dim, data_bytes, string_offsets));
             }
         }
 
@@ -334,9 +588,14 @@ pub fn run(manifest_path: &Path, output_path: &Path) -> Result<(), Box<dyn Error
         });
     }
 
-    // Add domain metadata ONCE to SnapshotWriter
+    // Add domain metadata to SnapshotWriter
     for d in &manifest.domains {
+        let node_count = domain_node_maps
+            .get(&d.id)
+            .map(|m| m.len() as u64)
+            .unwrap_or(0);
         writer.add_domain(d.id, parse_key_type(&d.key_type), &d.name);
+        writer.set_domain_node_count(d.id, node_count);
     }
 
     // Add relations to SnapshotWriter
@@ -361,7 +620,30 @@ pub fn run(manifest_path: &Path, output_path: &Path) -> Result<(), Box<dyn Error
         writer.set_relation_name(rel_idx, rel_name);
 
         for attr in cr.attributes {
-            writer.add_attribute_to_relation(rel_idx, &attr.0, attr.1, attr.2, attr.3, attr.4);
+            writer.add_attribute_to_relation(
+                rel_idx,
+                &attr.name,
+                attr.type_code,
+                attr.dimension,
+                attr.data,
+                attr.offsets,
+            );
+        }
+    }
+
+    // Add domain attributes to SnapshotWriter (attaches to existing relation or creates carrier)
+    for d in &manifest.domains {
+        if let Some(domain_attrs) = compiled_domain_attributes.remove(&d.id) {
+            for attr in domain_attrs {
+                writer.add_attribute_to_domain(
+                    d.id,
+                    &attr.name,
+                    attr.type_code,
+                    attr.dimension,
+                    attr.data,
+                    attr.offsets,
+                );
+            }
         }
     }
 
@@ -402,10 +684,10 @@ pub fn run(manifest_path: &Path, output_path: &Path) -> Result<(), Box<dyn Error
             let start_slot = slot;
             loop {
                 let mut k_off = [0u8; 4];
-                k_off.copy_from_slice(&table[slot * 8 .. slot * 8 + 4]);
+                k_off.copy_from_slice(&table[slot * 8..slot * 8 + 4]);
                 if u32::from_le_bytes(k_off) == 0 {
-                    table[slot * 8 .. slot * 8 + 4].copy_from_slice(&off.to_le_bytes());
-                    table[slot * 8 + 4 .. slot * 8 + 8].copy_from_slice(&nid.to_le_bytes());
+                    table[slot * 8..slot * 8 + 4].copy_from_slice(&off.to_le_bytes());
+                    table[slot * 8 + 4..slot * 8 + 8].copy_from_slice(&nid.to_le_bytes());
                     break;
                 }
                 slot = (slot + 1) % (key_count as usize);

@@ -1,8 +1,8 @@
+use impulse_graph::ffi::impulse_instruction_t;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
-use impulse_graph::ffi::impulse_instruction_t;
 
 fn get_opcode(name: &str) -> Option<u8> {
     match name {
@@ -31,10 +31,21 @@ fn get_opcode(name: &str) -> Option<u8> {
         "OP_HAS_CSC" => Some(0x1A),
         "OP_HAS_COO" => Some(0x1B),
         "OP_HAS_KEY_CATALOG" => Some(0x1C),
-        "OP_DENSE_WALK" => Some(0x1D),
+        "OP_ADAPTIVE_WALK" => Some(0x1D),
         "OP_CREATE_SCRATCH_INDEX" => Some(0x1E),
         "OP_DROP_SCRATCH_INDEX" => Some(0x1F),
-        "OP_HAS_DENSE" => Some(0x20),
+        "OP_VEC_CMP_EQ" => Some(0x20),
+        "OP_VEC_CMP_GT" => Some(0x21),
+        "OP_VEC_CMP_LT" => Some(0x22),
+        "OP_VEC_CMP_BETWEEN" => Some(0x23),
+        "OP_MASK_AND" => Some(0x24),
+        "OP_MASK_OR" => Some(0x25),
+        "OP_MASK_NOT" => Some(0x26),
+        "OP_VEC_BLEND" => Some(0x27),
+        "OP_ASSERT_FINITE" => Some(0x2A),
+        "OP_VEC_MATH_UNARY" => Some(0x2D),
+        "OP_VEC_MATH_BINARY" => Some(0x2E),
+        "OP_VEC_MATH_TERNARY" => Some(0x2F),
 
         "OP_SET_UNION" => Some(0x30),
         "OP_SET_INTERSECT" => Some(0x31),
@@ -46,6 +57,10 @@ fn get_opcode(name: &str) -> Option<u8> {
         "OP_VECTOR_STR_CONCAT" => Some(0x37),
         "OP_FLOAT_VECTOR_SCALE" => Some(0x38),
         "OP_L1_NORM_DIFF" => Some(0x39),
+        "OP_PROJECT_STATE" => Some(0x3A),
+        "OP_COALESCE" => Some(0x3B),
+        "OP_EXTRACT_VALIDITY" => Some(0x3C),
+        "OP_VECTOR_TIME_VALID_AT" => Some(0x3D),
 
         "OP_CC_AFFOREST" => Some(0x40),
         "OP_MXV" => Some(0x41),
@@ -94,10 +109,29 @@ fn get_opcode(name: &str) -> Option<u8> {
         "OP_ASSERT_SCRATCH_BYTES" => Some(0x74),
         "OP_SET_MAX_DOP" => Some(0x75),
 
+        "OP_LOAD_COLUMN_VECTOR" => Some(0x80),
+        "OP_GATHER_NODE_ATTR" => Some(0x81),
+        "OP_GATHER_EDGE_ATTR" => Some(0x82),
+        "OP_BRIN_ZONE_SKIP" => Some(0x83),
+        "OP_CSR_WALK_DIRECT_STORE" => Some(0x84),
+        "OP_CSR_WALK_DENSE_STREAM" => Some(0x85),
+        "OP_COO_WALK" => Some(0x86),
+        "OP_CSC_WALK_DIRECT_STORE" => Some(0x87),
+        "OP_FIXPOINT_KLEENE_STAR" => Some(0x88),
+        "OP_SWAP_REG" => Some(0x89),
+        "OP_FRONTIER_DIFF" => Some(0x8A),
+        "OP_COO_WALK_FILTERED" => Some(0x8B),
+        "OP_COO_WALK_REDUCE" => Some(0x8C),
+        "OP_COO_WALK_DIRECT_STORE" => Some(0x8D),
+        "OP_DENSE_WALK" => Some(0x8E),
+        "OP_DENSE_WALK_BITMATRIX" => Some(0x8F),
+
         "OP_COLLECT_BITSET" => Some(0x90),
         "OP_COLLECT_ARRAY" => Some(0x91),
         "OP_MAP_DENSE_TO_KEYS" => Some(0x92),
         "OP_COLLECT_VALUE_MAP" => Some(0x93),
+        "OP_COALESCE_BITSET" => Some(0x94),
+        "OP_COALESCE_DENSE_ARRAY" => Some(0x95),
         _ if name.starts_with("OP_RESERVED_") => {
             let hex_part = name.strip_prefix("OP_RESERVED_").unwrap();
             u8::from_str_radix(hex_part, 16).ok()
@@ -112,7 +146,7 @@ pub fn run(input_path: &Path, output_path: &Path) -> Result<(), Box<dyn std::err
 
     let mut symbols: HashMap<String, u32> = HashMap::new();
     let mut labels: HashMap<String, usize> = HashMap::new();
-    
+
     struct RawInstruction {
         opcode_str: String,
         flags_str: String,
@@ -128,7 +162,7 @@ pub fn run(input_path: &Path, output_path: &Path) -> Result<(), Box<dyn std::err
         let line_num = idx + 1;
         let line = line_res?;
         let trimmed = line.trim();
-        
+
         // Skip comments and empty lines
         if trimmed.is_empty() || trimmed.starts_with(';') {
             continue;
@@ -148,7 +182,7 @@ pub fn run(input_path: &Path, output_path: &Path) -> Result<(), Box<dyn std::err
                 let symbol_name = parts[1].replace('"', "");
                 let value_str = parts[3].trim_end_matches(',');
                 let value = value_str.parse::<u32>()?;
-                
+
                 match directive {
                     ".domain" => {
                         symbols.insert(format!("DOMAIN_{}", symbol_name.to_uppercase()), value);
@@ -162,7 +196,11 @@ pub fn run(input_path: &Path, output_path: &Path) -> Result<(), Box<dyn std::err
                         symbols.insert(format!("ATTR_{}", symbol_name.to_uppercase()), value);
                         symbols.insert(symbol_name.clone(), value);
                     }
-                    _ => return Err(format!("Unknown directive {} at line {}", directive, line_num).into()),
+                    _ => {
+                        return Err(
+                            format!("Unknown directive {} at line {}", directive, line_num).into(),
+                        )
+                    }
                 }
             }
             continue;
@@ -194,10 +232,14 @@ pub fn run(input_path: &Path, output_path: &Path) -> Result<(), Box<dyn std::err
         }
 
         let opcode_str = parts[0].to_string();
-        
+
         // Parse operands
         let args_str = parts[1..].join(" ");
-        let args: Vec<&str> = args_str.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+        let args: Vec<&str> = args_str
+            .split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
 
         let mut flags_str = "0".to_string();
         let mut dst_str = "0".to_string();
@@ -241,7 +283,13 @@ pub fn run(input_path: &Path, output_path: &Path) -> Result<(), Box<dyn std::err
                     dst_str = args[0].to_string();
                     payload_str = format!("{} | {} | {}", args[1], args[2], args[3]);
                 }
-                _ => return Err(format!("Invalid number of arguments in: {} at line {}", instr_text, line_num).into()),
+                _ => {
+                    return Err(format!(
+                        "Invalid number of arguments in: {} at line {}",
+                        instr_text, line_num
+                    )
+                    .into())
+                }
             }
         }
 
@@ -260,7 +308,10 @@ pub fn run(input_path: &Path, output_path: &Path) -> Result<(), Box<dyn std::err
 
     for (current_pc, raw) in raw_program.iter().enumerate() {
         let opcode = get_opcode(&raw.opcode_str).ok_or_else(|| {
-            format!("Invalid opcode: {} at line {}", raw.opcode_str, raw.line_num)
+            format!(
+                "Invalid opcode: {} at line {}",
+                raw.opcode_str, raw.line_num
+            )
         })?;
 
         let flags = parse_flags(&raw.flags_str)?;
@@ -281,14 +332,17 @@ pub fn run(input_path: &Path, output_path: &Path) -> Result<(), Box<dyn std::err
 
     let mut out_file = File::create(output_path)?;
     out_file.write_all(&compiled_bytes)?;
-    println!("Assembled successfully: {} instructions -> {:?}", raw_program.len(), output_path);
+    println!(
+        "Assembled successfully: {} instructions -> {:?}",
+        raw_program.len(),
+        output_path
+    );
     Ok(())
 }
 
 fn is_register_str(s: &str) -> bool {
     let trimmed = s.trim().to_uppercase();
-    if trimmed.starts_with('R') {
-        let num_str = &trimmed[1..];
+    if let Some(num_str) = trimmed.strip_prefix('R') {
         !num_str.is_empty() && num_str.chars().all(|c| c.is_ascii_digit())
     } else {
         trimmed.parse::<u16>().is_ok()
@@ -300,8 +354,7 @@ fn parse_register(s: &str) -> Result<u16, Box<dyn std::error::Error>> {
     if trimmed.is_empty() {
         return Ok(0);
     }
-    if trimmed.starts_with('R') {
-        let num_str = &trimmed[1..];
+    if let Some(num_str) = trimmed.strip_prefix('R') {
         if num_str.chars().all(|c| c.is_ascii_digit()) {
             if let Ok(reg) = num_str.parse::<u16>() {
                 if reg < 64 {
@@ -332,8 +385,8 @@ fn parse_flags(s: &str) -> Result<u8, Box<dyn std::error::Error>> {
             "FLAG_INVERT" | "INVERT" => val |= 0x04,
             "FLAG_OFFHEAP" | "OFFHEAP" => val |= 0x08,
             _ => {
-                if part.starts_with("0X") {
-                    if let Ok(num) = u8::from_str_radix(&part[2..], 16) {
+                if let Some(hex_part) = part.strip_prefix("0X") {
+                    if let Ok(num) = u8::from_str_radix(hex_part, 16) {
                         val |= num;
                         continue;
                     }
@@ -368,7 +421,8 @@ fn resolve_single_val(
     if let Some(v) = lookup_constant(trimmed) {
         return Ok(v);
     }
-    if trimmed.starts_with("REL_") || trimmed.starts_with("DOMAIN_") || trimmed.starts_with("ATTR_") {
+    if trimmed.starts_with("REL_") || trimmed.starts_with("DOMAIN_") || trimmed.starts_with("ATTR_")
+    {
         let suffix = trimmed
             .trim_start_matches("REL_")
             .trim_start_matches("DOMAIN_")
@@ -389,7 +443,8 @@ fn parse_payload(
 ) -> Result<u32, Box<dyn std::error::Error>> {
     let parts: Vec<&str> = s.split('|').map(|x| x.trim()).collect();
 
-    if opcode == 0x18 { // OP_CSC_WALK
+    if opcode == 0x18 {
+        // OP_CSC_WALK
         if parts.len() == 2 {
             let src = parse_register(parts[0])? as u32;
             let rel = resolve_single_val(parts[1], symbols)?;

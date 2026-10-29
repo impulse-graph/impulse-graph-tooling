@@ -3,6 +3,7 @@ use std::collections::VecDeque;
 use std::error::Error;
 use std::path::Path;
 
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     input_path: &Path,
     output_path: &Path,
@@ -50,16 +51,15 @@ pub fn run(
     }
 
     writer.finalize()?;
-    println!("SUCCESS: Optimized snapshot saved to {}", output_path.display());
+    println!(
+        "SUCCESS: Optimized snapshot saved to {}",
+        output_path.display()
+    );
     Ok(())
 }
 
 /// Apply Reverse Cuthill-McKee (RCM) bandwidth reduction reordering to CSR graph
-fn apply_rcm(
-    node_count: usize,
-    row_offsets: &[u32],
-    col_indices: &[u32],
-) -> (Vec<u32>, Vec<u32>) {
+fn apply_rcm(node_count: usize, row_offsets: &[u32], col_indices: &[u32]) -> (Vec<u32>, Vec<u32>) {
     let mut visited = vec![false; node_count];
     let mut order = Vec::with_capacity(node_count);
 
@@ -113,8 +113,8 @@ fn apply_rcm(
         let start = row_offsets[u] as usize;
         let end = row_offsets[u + 1] as usize;
         let new_u = old_to_new[u];
-        for k in start..end {
-            let v = col_indices[k] as usize;
+        for &v_raw in &col_indices[start..end] {
+            let v = v_raw as usize;
             if v < node_count {
                 let new_v = old_to_new[v];
                 new_edges.push((new_u, new_v));
@@ -149,7 +149,7 @@ fn apply_degree_sort(
         .collect();
 
     // Sort by degree descending
-    degrees.sort_by(|a, b| b.1.cmp(&a.1));
+    degrees.sort_by_key(|&(_, deg)| std::cmp::Reverse(deg));
 
     let mut old_to_new = vec![0u32; node_count];
     for (new_id, &(old_id, _)) in degrees.iter().enumerate() {
@@ -161,8 +161,8 @@ fn apply_degree_sort(
         let start = row_offsets[u] as usize;
         let end = row_offsets[u + 1] as usize;
         let new_u = old_to_new[u];
-        for k in start..end {
-            let v = col_indices[k] as usize;
+        for &v_raw in &col_indices[start..end] {
+            let v = v_raw as usize;
             if v < node_count {
                 let new_v = old_to_new[v];
                 new_edges.push((new_u, new_v));

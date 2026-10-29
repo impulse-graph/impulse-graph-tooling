@@ -23,7 +23,7 @@ pub fn run(
         for entry_res in fs::read_dir(safetensors_path)? {
             let entry = entry_res?;
             let p = entry.path();
-            if p.is_file() && p.extension().map_or(false, |ext| ext == "safetensors") {
+            if p.is_file() && p.extension().is_some_and(|ext| ext == "safetensors") {
                 shard_files.push(p);
             }
         }
@@ -33,10 +33,17 @@ pub fn run(
     }
 
     if shard_files.is_empty() {
-        return Err(format!("No .safetensors files found in {}", safetensors_path.display()).into());
+        return Err(format!(
+            "No .safetensors files found in {}",
+            safetensors_path.display()
+        )
+        .into());
     }
 
-    println!("  Found {} .safetensors shard files to ingest", shard_files.len());
+    println!(
+        "  Found {} .safetensors shard files to ingest",
+        shard_files.len()
+    );
 
     let mut total_tensors = 0;
     let mut total_bytes: u64 = 0;
@@ -73,14 +80,7 @@ pub fn run(
     // Baseline self-relation table
     let row_offsets = vec![0u32; total_tensors + 1];
     let col_indices = vec![];
-    writer.add_relation(
-        0,
-        0,
-        total_tensors as u64,
-        0,
-        row_offsets,
-        col_indices,
-    );
+    writer.add_relation(0, 0, total_tensors as u64, 0, row_offsets, col_indices);
 
     writer.finalize()?;
 

@@ -1,0 +1,43 @@
+name: Rust Linter & Formatter CI
+
+on:
+  push:
+    branches: [ "main", "feat/*" ]
+  pull_request:
+    branches: [ "main" ]
+
+permissions:
+  contents: read
+
+jobs:
+  rust-check:
+    name: Rustfmt & Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Core Repository
+        uses: actions/checkout@v4
+        with:
+          repository: impulse-graph/impulse-graph-core
+          path: impulse-graph-core
+
+      - name: Checkout Tooling Repository
+        uses: actions/checkout@v4
+        with:
+          path: impulse-graph-tooling
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Rustfmt Check
+        working-directory: impulse-graph-tooling
+        run: cargo fmt --all -- --check
+
+      - name: Clippy Linter Check
+        working-directory: impulse-graph-tooling
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Run Tests
+        working-directory: impulse-graph-tooling
+        run: cargo test --all-targets
