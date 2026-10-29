@@ -74,8 +74,8 @@ pub fn run(
 
                     match attr.type_code {
                         1 => {
-                            for chunk in data.chunks_exact(4) {
-                                let v = i32::from_le_bytes(chunk.try_into().unwrap());
+                            for &chunk in data.as_chunks::<4>().0 {
+                                let v = i32::from_le_bytes(chunk);
                                 if v == i32::MIN {
                                     hist.offer_null();
                                 } else {
@@ -85,8 +85,8 @@ pub fn run(
                             }
                         }
                         2 => {
-                            for chunk in data.chunks_exact(8) {
-                                let v = i64::from_le_bytes(chunk.try_into().unwrap());
+                            for &chunk in data.as_chunks::<8>().0 {
+                                let v = i64::from_le_bytes(chunk);
                                 if v == i64::MIN {
                                     hist.offer_null();
                                 } else {
@@ -96,8 +96,8 @@ pub fn run(
                             }
                         }
                         3 => {
-                            for chunk in data.chunks_exact(4) {
-                                let v = f32::from_le_bytes(chunk.try_into().unwrap());
+                            for &chunk in data.as_chunks::<4>().0 {
+                                let v = f32::from_le_bytes(chunk);
                                 if v.is_nan() {
                                     hist.offer_null();
                                 } else {
@@ -107,8 +107,8 @@ pub fn run(
                             }
                         }
                         4 => {
-                            for chunk in data.chunks_exact(8) {
-                                let v = f64::from_le_bytes(chunk.try_into().unwrap());
+                            for &chunk in data.as_chunks::<8>().0 {
+                                let v = f64::from_le_bytes(chunk);
                                 if v.is_nan() {
                                     hist.offer_null();
                                 } else {

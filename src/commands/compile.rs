@@ -110,8 +110,11 @@ fn reorder_native_column(col: &NativeColumn, permutation: &[usize]) -> NativeCol
             (raw_bitmap_bytes + 127) & !127
         };
         let words: Vec<u64> = col.data[..raw_bitmap_bytes]
-            .chunks_exact(8)
-            .map(|chunk| u64::from_le_bytes(chunk.try_into().unwrap()))
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .copied()
+            .map(u64::from_le_bytes)
             .collect();
         (Some(words), &col.data[padded_bitmap_bytes..])
     } else {
