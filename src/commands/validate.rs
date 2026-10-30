@@ -1,17 +1,52 @@
 use ed25519_dalek::VerifyingKey;
-use impulse_graph::spec::{IMPULSE_MAGIC, IMPULSE_VERSION_PACKED};
+use impulse_graph::spec::{
+    VamanaQuantType, IMPULSE_MAGIC, IMPULSE_VERSION_PACKED, IMP_INDEX_VAMANA_ANN,
+};
 use impulse_graph::SnapshotReader;
 use sha2::Digest;
 use std::error::Error;
 use std::fs;
 use std::path::Path;
 
+#[derive(Debug, Clone, Default)]
+pub struct ValidateOptions<'a> {
+    pub strict_alignment: bool,
+    pub public_key: Option<&'a Path>,
+    /// SQLite `PRAGMA quick_check`: structural headers, alignment, and CSR monotonicity only ($O(V + R)$).
+    pub quick_check: bool,
+    /// SQLite `IMP_AUDIT`: full $O(V + E + N \cdot R)$ cross-index and CSC transpose multiset audit.
+    pub deep_audit: bool,
+}
+
 pub fn run(
     file: &Path,
     strict_alignment: bool,
     public_key: Option<&Path>,
 ) -> Result<(), Box<dyn Error>> {
-    println!("Validating binary snapshot: {}...", file.display());
+    run_with_options(
+        file,
+        &ValidateOptions {
+            strict_alignment,
+            public_key,
+            quick_check: false,
+            deep_audit: false,
+        },
+    )
+}
+
+pub fn run_with_options(file: &Path, opts: &ValidateOptions<'_>) -> Result<(), Box<dyn Error>> {
+    let mode_label = if opts.deep_audit {
+        "DEEP-AUDIT (SQLite IMP_AUDIT)"
+    } else if opts.quick_check {
+        "QUICK-CHECK (SQLite PRAGMA quick_check)"
+    } else {
+        "INTEGRITY-CHECK (SQLite PRAGMA integrity_check)"
+    };
+    println!(
+        "Validating binary snapshot [{}]: {}...",
+        mode_label,
+        file.display()
+    );
     let metadata = fs::metadata(file)?;
     let file_len = metadata.len();
 
@@ -24,6 +59,48 @@ pub fn run(
     }
 
     let reader = SnapshotReader::open(file)?;
+
+    // Alignment Check (128-byte hardware alignment rule)
+    if opts.strict_alignment {
+        let data = fs::read(file)?;
+        let ptr_addr = data.as_ptr() as usize;
+        if !ptr_addr.is_multiple_of(128) {
+            println!("  [WARNING] File buffer memory address is not 128-byte aligned in RAM");
+        } else {
+            println!("  [OK] 128-byte hardware memory alignment verified");
+        }
+    }
+
+    validate_reader(&reader, file_len, opts)?;
+
+    // Ed25519 Signature Verification
+    if let Some(pub_key_path) = opts.public_key {
+        let pub_key_bytes = fs::read(pub_key_path)?;
+        if pub_key_bytes.len() < 32 {
+            return Err("Public key file must be at least 32 bytes".into());
+        }
+        let mut bytes = [0u8; 32];
+        bytes.copy_from_slice(&pub_key_bytes[..32]);
+        let _pk = VerifyingKey::from_bytes(&bytes)?;
+
+        let file_data = fs::read(file)?;
+        let _digest = sha2::Sha256::digest(&file_data[..64]);
+
+        println!(
+            "  [OK] Ed25519 signature verified with key {}",
+            pub_key_path.display()
+        );
+    }
+
+    println!("SUCCESS: Snapshot validation passed cleanly with 0 errors.");
+    Ok(())
+}
+
+pub fn validate_reader(
+    reader: &SnapshotReader,
+    file_len: u64,
+    opts: &ValidateOptions<'_>,
+) -> Result<(), Box<dyn Error>> {
     let header = reader.header();
 
     // 1. Magic & Version
@@ -44,17 +121,6 @@ pub fn run(
         .into());
     }
     println!("  [OK] Header Magic & Version (IMPS v0.9.0)");
-
-    // 2. Alignment Check (128-byte hardware alignment rule)
-    if strict_alignment {
-        let data = fs::read(file)?;
-        let ptr_addr = data.as_ptr() as usize;
-        if !ptr_addr.is_multiple_of(128) {
-            println!("  [WARNING] File buffer memory address is not 128-byte aligned in RAM");
-        } else {
-            println!("  [OK] 128-byte hardware memory alignment verified");
-        }
-    }
 
     // 3. Topology & CSR Integrity & 128-Byte Array Alignment Checks
     let mut seen_rel_pairs = std::collections::HashSet::new();
@@ -247,6 +313,70 @@ pub fn run(
                 )
                 .into());
             }
+
+            if !opts.quick_check {
+                let tgt_node_count = reader
+                    .domains()
+                    .iter()
+                    .find(|d| d.domain_id == rel.tgt_domain_id)
+                    .map(|d| d.node_count)
+                    .unwrap_or(rel.node_count);
+                for (edge_idx, &tgt_id) in col_indices.iter().enumerate() {
+                    if (tgt_id as u64) >= tgt_node_count {
+                        return Err(format!(
+                            "Relation #{}: CSR col_indices[{}] target node {} out of bounds (tgt_domain {} node_count={})",
+                            idx, edge_idx, tgt_id, rel.tgt_domain_id, tgt_node_count
+                        )
+                        .into());
+                    }
+                }
+            }
+
+            if opts.deep_audit && rel.csc_row_off_offset > 0 && rel.csc_col_idx_offset > 0 {
+                if let (Some(csc_rows), Some(csc_cols)) = (
+                    reader.get_csc_row_offsets(idx)?,
+                    reader.get_csc_col_indices(idx)?,
+                ) {
+                    let mut csr_edges = Vec::with_capacity(rel.edge_count as usize);
+                    for u in 0..rel.node_count as usize {
+                        for e in row_offsets[u] as usize..row_offsets[u + 1] as usize {
+                            csr_edges.push((u as u32, col_indices[e]));
+                        }
+                    }
+                    let mut csc_edges = Vec::with_capacity(rel.edge_count as usize);
+                    let tgt_cnt = csc_rows.len().saturating_sub(1);
+                    for v in 0..tgt_cnt {
+                        if csc_rows[v] > csc_rows[v + 1] {
+                            return Err(format!(
+                                "Relation #{}: CSC row_offsets non-monotonic at target {}",
+                                idx, v
+                            )
+                            .into());
+                        }
+                        for e in csc_rows[v] as usize..csc_rows[v + 1] as usize {
+                            if e >= csc_cols.len() {
+                                return Err(format!(
+                                    "Relation #{}: CSC edge index {} exceeds csc_cols length {}",
+                                    idx,
+                                    e,
+                                    csc_cols.len()
+                                )
+                                .into());
+                            }
+                            csc_edges.push((csc_cols[e], v as u32));
+                        }
+                    }
+                    csr_edges.sort_unstable();
+                    csc_edges.sort_unstable();
+                    if csr_edges != csc_edges {
+                        return Err(format!(
+                            "Relation #{}: Deep audit failed: CSC transpose edge multiset does not match CSR",
+                            idx
+                        )
+                        .into());
+                    }
+                }
+            }
         }
     }
 
@@ -270,6 +400,89 @@ pub fn run(
                 .into());
             }
         }
+        if idx_entry.index_type == IMP_INDEX_VAMANA_ANN && !opts.quick_check {
+            let vh = reader.parse_vamana_header(idx_entry)?;
+            let dom = reader
+                .domains()
+                .iter()
+                .find(|d| d.domain_id == vh.domain_id)
+                .ok_or_else(|| {
+                    format!(
+                        "Vamana Index #{}: target domain {} not found in snapshot",
+                        idx_entry.index_id, vh.domain_id
+                    )
+                })?;
+            if vh.node_count != dom.node_count {
+                return Err(format!(
+                    "Vamana Index #{}: header node_count {} != domain node_count {}",
+                    idx_entry.index_id, vh.node_count, dom.node_count
+                )
+                .into());
+            }
+            if vh.node_count > 0 && (vh.medoid_node_id as u64) >= vh.node_count {
+                return Err(format!(
+                    "Vamana Index #{}: medoid_node_id {} >= node_count {}",
+                    idx_entry.index_id, vh.medoid_node_id, vh.node_count
+                )
+                .into());
+            }
+            let adj_bytes = reader.get_vamana_adj_slab(&vh)?;
+            let r = vh.max_degree_r as usize;
+            let row_stride_bytes = (1 + r) * 4;
+            for u in 0..vh.node_count as usize {
+                let row_off = u * row_stride_bytes;
+                let deg = u32::from_le_bytes(
+                    adj_bytes[row_off..row_off + 4].try_into().unwrap(),
+                ) as usize;
+                if deg > r {
+                    return Err(format!(
+                        "Vamana Index #{}: node {} degree {} exceeds max_degree_r {}",
+                        idx_entry.index_id, u, deg, r
+                    )
+                    .into());
+                }
+                for slot in 0..deg {
+                    let nbr_off = row_off + (1 + slot) * 4;
+                    let nbr = u32::from_le_bytes(
+                        adj_bytes[nbr_off..nbr_off + 4].try_into().unwrap(),
+                    );
+                    if (nbr as u64) >= vh.node_count {
+                        return Err(format!(
+                            "Vamana Index #{}: node {} neighbor {} out of bounds (node_count={})",
+                            idx_entry.index_id, u, nbr, vh.node_count
+                        )
+                        .into());
+                    }
+                    if opts.deep_audit && nbr as usize == u {
+                        return Err(format!(
+                            "Vamana Index #{}: node {} has self-loop in Vamana adjacency list",
+                            idx_entry.index_id, u
+                        )
+                        .into());
+                    }
+                }
+            }
+            let quant = VamanaQuantType::from_u8(vh.quant_type).ok_or_else(|| {
+                format!(
+                    "Vamana Index #{}: unknown quant_type {}",
+                    idx_entry.index_id, vh.quant_type
+                )
+            })?;
+            if quant != VamanaQuantType::None {
+                let _ = reader.get_vamana_quant_slab(&vh)?;
+            }
+            println!(
+                "  [OK] Vamana Index #{} (domain={}, attr={}, N={}, D={}, R={}, medoid={}, quant={:?}) verified",
+                idx_entry.index_id,
+                vh.domain_id,
+                vh.vec_attr_id,
+                vh.node_count,
+                vh.dimension,
+                vh.max_degree_r,
+                vh.medoid_node_id,
+                quant
+            );
+        }
     }
     if !reader.index_entries().is_empty() {
         println!(
@@ -279,26 +492,5 @@ pub fn run(
     }
 
     println!("  [OK] CSR & CSC Topology arrays, SoA attributes 128B alignment & bounds verified");
-
-    // 4. Ed25519 Signature Verification
-    if let Some(pub_key_path) = public_key {
-        let pub_key_bytes = fs::read(pub_key_path)?;
-        if pub_key_bytes.len() < 32 {
-            return Err("Public key file must be at least 32 bytes".into());
-        }
-        let mut bytes = [0u8; 32];
-        bytes.copy_from_slice(&pub_key_bytes[..32]);
-        let _pk = VerifyingKey::from_bytes(&bytes)?;
-
-        let file_data = fs::read(file)?;
-        let _digest = sha2::Sha256::digest(&file_data[..64]);
-
-        println!(
-            "  [OK] Ed25519 signature verified with key {}",
-            pub_key_path.display()
-        );
-    }
-
-    println!("SUCCESS: Snapshot validation passed cleanly with 0 errors.");
     Ok(())
 }

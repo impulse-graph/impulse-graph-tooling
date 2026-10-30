@@ -50,6 +50,9 @@ fn test_generate_graph500_rmat() {
         relation_name: "GRAPH500_EDGE".to_string(),
         attributes: None,
         chunk_size: 1_000_000,
+        embedding_dim: None,
+        embedding_attr: "embedding".to_string(),
+        vector_index: None,
     };
 
     let res = commands::generate::run(&args);
@@ -117,6 +120,9 @@ fn test_generate_social_barabasi_albert() {
         relation_name: "FRIENDS_WITH".to_string(),
         attributes: None,
         chunk_size: 1_000_000,
+        embedding_dim: None,
+        embedding_attr: "embedding".to_string(),
+        vector_index: None,
     };
 
     let res = commands::generate::run(&args);
@@ -169,6 +175,9 @@ fn test_generate_social_sbm_communities() {
         relation_name: "COMMUNITY_EDGE".to_string(),
         attributes: None,
         chunk_size: 1_000_000,
+        embedding_dim: None,
+        embedding_attr: "embedding".to_string(),
+        vector_index: None,
     };
 
     let res = commands::generate::run(&args);
@@ -220,6 +229,9 @@ fn test_generate_erdos_renyi() {
         relation_name: "RANDOM_EDGE".to_string(),
         attributes: None,
         chunk_size: 1_000_000,
+        embedding_dim: None,
+        embedding_attr: "embedding".to_string(),
+        vector_index: None,
     };
 
     let res = commands::generate::run(&args);
@@ -274,6 +286,9 @@ fn test_generate_grid_2d_and_3d() {
         relation_name: "GRID_LINK".to_string(),
         attributes: None,
         chunk_size: 1_000_000,
+        embedding_dim: None,
+        embedding_attr: "embedding".to_string(),
+        vector_index: None,
     };
 
     let res2d = commands::generate::run(&args2d);
@@ -341,6 +356,9 @@ fn test_generate_tree_and_star() {
         relation_name: "PARENT_OF".to_string(),
         attributes: None,
         chunk_size: 1_000_000,
+        embedding_dim: None,
+        embedding_attr: "embedding".to_string(),
+        vector_index: None,
     };
 
     let res_tree = commands::generate::run(&args_tree);
@@ -406,6 +424,9 @@ fn test_generate_bipartite_multi_domain() {
         relation_name: "LOGGED_INTO".to_string(),
         attributes: None,
         chunk_size: 1_000_000,
+        embedding_dim: None,
+        embedding_attr: "embedding".to_string(),
+        vector_index: None,
     };
 
     let res = commands::generate::run(&args);
@@ -468,6 +489,9 @@ fn test_generate_with_synthetic_attributes() {
         relation_name: "WEIGHTED_EDGE".to_string(),
         attributes: Some("weight:f32,timestamp:i64,type:i32".to_string()),
         chunk_size: 1_000_000,
+        embedding_dim: None,
+        embedding_attr: "embedding".to_string(),
+        vector_index: None,
     };
 
     let res = commands::generate::run(&args);
@@ -527,6 +551,9 @@ fn test_generate_delimited_tsv_csv_export() {
         relation_name: "EDGE".to_string(),
         attributes: Some("weight:f32".to_string()),
         chunk_size: 1_000_000,
+        embedding_dim: None,
+        embedding_attr: "embedding".to_string(),
+        vector_index: None,
     };
 
     let res_tsv = commands::generate::run(&args);

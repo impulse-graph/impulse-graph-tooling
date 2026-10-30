@@ -244,6 +244,9 @@ fn test_stats_cli_invocation_and_json_mode() {
         relation_name: "EDGES".to_string(),
         attributes: Some("weight:f32".to_string()),
         chunk_size: 1_000_000,
+        embedding_dim: None,
+        embedding_attr: "embedding".to_string(),
+        vector_index: None,
     };
 
     let gen_res = commands::generate::run(&gen_args);

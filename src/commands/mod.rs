@@ -1,4 +1,5 @@
 pub mod assemble;
+pub mod bench_vector;
 pub mod compile;
 pub mod crypto;
 pub mod diff;

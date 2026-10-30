@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 pub mod commands;
 pub mod compiler;
+pub mod embeddings;
 pub mod parquet_reader;
 
 #[derive(Parser)]
@@ -34,6 +35,34 @@ pub enum Commands {
         /// Integer input parameter (e.g. source root node ID)
         #[arg(short, long, default_value_t = 0)]
         input_val: u64,
+
+        /// Run static bytecode verifier (impulse_vm_validate) before execution
+        #[arg(long)]
+        verify: bool,
+
+        /// Enable SQLite-style NEVER_CORRUPT well-formedness assertions
+        #[arg(long)]
+        never_corrupt: bool,
+
+        /// Optimization disable bitmask (IMPULSE_TESTCTRL_OPTIMIZATIONS)
+        #[arg(long, default_value_t = 0)]
+        opt_disable_mask: u64,
+
+        /// Differential execution check (compare optimized vs unoptimized VM execution)
+        #[arg(long)]
+        diff_opt: bool,
+
+        /// Fault simulation delay count (IMPULSE_TESTCTRL_FAULT_CONFIG)
+        #[arg(long)]
+        fault_delay: Option<i32>,
+
+        /// Fault simulation repeat count (IMPULSE_TESTCTRL_FAULT_CONFIG)
+        #[arg(long, default_value_t = 1)]
+        fault_repeat: i32,
+
+        /// Report IMP_VM_BRANCH_TAG coverage count and bitmap after execution
+        #[arg(long)]
+        branch_cov: bool,
     },
 
     /// Compile DSL source script (.impscm, .impk, .implog) into .impas assembly text or .impb bytecode (Code Only)
@@ -60,7 +89,18 @@ pub enum Commands {
         /// Output binary snapshot destination path (.imps)
         #[arg(short, long, value_name = "OUTPUT")]
         output: PathBuf,
+
+        /// External embedding file attachments (Domain.attr=path[:format=npy|fvecs|bvecs|ivecs|safetensors|parquet|jsonl|csv|tsv][:dim=D][:norm=l2])
+        #[arg(long = "embeddings", value_name = "SPEC")]
+        embeddings: Vec<String>,
+
+        /// Vamana ANN vector index specs (Domain.attr[:R=32][:L=64][:alpha=1.2][:metric=cosine|l2|dot][:quant=sq8|fp16|bq1|none])
+        #[arg(long = "vector-index", value_name = "SPEC")]
+        vector_index: Vec<String>,
     },
+
+    /// Empirical Vamana ANN vector indexing & two-stage quantized search benchmark harness
+    BenchVector(commands::bench_vector::BenchVectorOptions),
 
     /// Inspect binary snapshot header, section directory, domain catalogs, and topology metadata
     Inspect {
@@ -206,7 +246,37 @@ pub enum SnapshotCommands {
         /// Output binary snapshot destination path (.imps)
         #[arg(short, long, value_name = "OUTPUT")]
         output: PathBuf,
+
+        /// External embedding file attachments (Domain.attr=path[:format=...][:dim=D][:norm=l2])
+        #[arg(long = "embeddings", value_name = "SPEC")]
+        embeddings: Vec<String>,
+
+        /// Vamana ANN vector index specs (Domain.attr[:R=32][:L=64][:alpha=1.2][:metric=cosine|l2|dot][:quant=sq8|fp16|bq1|none])
+        #[arg(long = "vector-index", value_name = "SPEC")]
+        vector_index: Vec<String>,
     },
+
+    /// Attach external embedding files (.npy, .fvecs, .safetensors, .parquet, .jsonl, .csv) and optional Vamana ANN indices to an existing .imps snapshot
+    AttachEmbeddings {
+        /// Input binary snapshot (.imps)
+        #[arg(short, long, value_name = "INPUT")]
+        input: PathBuf,
+
+        /// Output binary snapshot destination (.imps)
+        #[arg(short, long, value_name = "OUTPUT")]
+        output: PathBuf,
+
+        /// External embedding file attachments (Domain.attr=path[:format=...][:dim=D][:norm=l2])
+        #[arg(long = "embeddings", value_name = "SPEC", required = true)]
+        embeddings: Vec<String>,
+
+        /// Optional Vamana ANN vector index specs (Domain.attr[:R=32][:L=64][:alpha=1.2][:metric=cosine|l2|dot][:quant=sq8|fp16|bq1|none])
+        #[arg(long = "vector-index", value_name = "SPEC")]
+        vector_index: Vec<String>,
+    },
+
+    /// Empirical Vamana ANN vector indexing & two-stage quantized search benchmark harness
+    BenchVector(commands::bench_vector::BenchVectorOptions),
 
     /// Build a new binary snapshot by integrating WAL delta log files
     Merge {
@@ -251,9 +321,17 @@ pub enum SnapshotCommands {
         /// Optional public key file to verify Ed25519 signature
         #[arg(short, long)]
         public_key: Option<PathBuf>,
+
+        /// Fast structural header, alignment, and CSR monotonicity check (SQLite PRAGMA quick_check)
+        #[arg(long)]
+        quick_check: bool,
+
+        /// Deep O(V + E + N*R) cross-index, CSC transpose multiset, and Vamana graph audit (SQLite IMP_AUDIT)
+        #[arg(long)]
+        deep_audit: bool,
     },
 
-    /// Heavy offline snapshot layout optimizer (RCM graph reordering, vector encodings, section stripping)
+    /// Heavy offline snapshot layout optimizer (RCM graph reordering, Vamana BFS locality, vector encodings, section stripping)
     Optimize {
         /// Input binary snapshot (.imps)
         #[arg(short, long, value_name = "INPUT")]
@@ -270,6 +348,22 @@ pub enum SnapshotCommands {
         /// Apply degree-descending node ID reordering for L1/L2 cache locality
         #[arg(long)]
         degree_sort: bool,
+
+        /// Reorder domain nodes by BFS traversal order from the Vamana medoid for beam-search cache locality
+        #[arg(long)]
+        vamana_locality: bool,
+
+        /// Force full rebuild of existing Vamana ANN indices instead of O(N*R) permutation remapping
+        #[arg(long)]
+        rebuild_vector_index: bool,
+
+        /// Attach external embedding files before optimizing (Domain.attr=path[:format=...][:dim=D][:norm=l2])
+        #[arg(long = "embeddings", value_name = "SPEC")]
+        embeddings: Vec<String>,
+
+        /// Build or replace Vamana ANN vector indices (Domain.attr[:R=32][:L=64][:alpha=1.2][:metric=cosine|l2|dot][:quant=sq8|fp16|bq1|none])
+        #[arg(long = "vector-index", value_name = "SPEC")]
+        vector_index: Vec<String>,
 
         /// Generate CSC (Compressed Sparse Column) auxiliary reverse topology sections
         #[arg(long)]
@@ -327,6 +421,10 @@ pub enum SnapshotCommands {
         /// Domain name for model weight nodes
         #[arg(short, long, default_value = "ModelWeightNode")]
         domain: String,
+
+        /// Optional Vamana ANN index spec to build on the ingested tensor (e.g. R=32:L=64:metric=cosine:quant=sq8)
+        #[arg(long = "vector-index", value_name = "SPEC")]
+        vector_index: Option<String>,
     },
 
     /// Synthesize synthetic graph datasets and .imps binary snapshots across multiple topology profiles
@@ -533,4 +631,16 @@ pub struct GenerateArgs {
     /// Chunk / batch buffer size in edges for streaming generation
     #[arg(long, default_value_t = 5_000_000, value_name = "BATCH_SIZE")]
     pub chunk_size: usize,
+
+    /// Generate synthetic community-clustered + homophily-smoothed Float32 node embeddings of dimension D
+    #[arg(long, value_name = "DIM")]
+    pub embedding_dim: Option<u32>,
+
+    /// Attribute name for synthetic node embeddings (when --embedding-dim is set)
+    #[arg(long, default_value = "embedding", value_name = "ATTR")]
+    pub embedding_attr: String,
+
+    /// Build a Section 2.6 IMP_INDEX_VAMANA_ANN index on generated node embeddings (e.g. "R=16:L=48:metric=cosine:quant=sq8")
+    #[arg(long = "vector-index", value_name = "SPEC")]
+    pub vector_index: Option<String>,
 }

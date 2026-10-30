@@ -116,7 +116,7 @@ pub fn run(args: &GenerateArgs) -> Result<(), Box<dyn Error>> {
 
     match args.format.to_lowercase().as_str() {
         "imps" | "binary" => {
-            write_imps_snapshot(&graph, &args.output, &attr_specs, seed, args.include_csc)?;
+            write_imps_snapshot(&graph, &args.output, &attr_specs, seed, args)?;
         }
         "tsv" => {
             write_delimited(&graph, &args.output, '\t', &attr_specs, seed)?;
@@ -653,8 +653,9 @@ fn write_imps_snapshot(
     output_path: &Path,
     attr_specs: &[AttributeSpec],
     seed: u64,
-    include_csc: bool,
+    args: &GenerateArgs,
 ) -> Result<(), Box<dyn Error>> {
+    let include_csc = args.include_csc;
     println!("  Constructing Spec v0.9.0 binary snapshot...");
     let mut writer = SnapshotWriter::new(output_path.to_str().unwrap_or("snapshot.imps"));
 
@@ -693,6 +694,28 @@ fn write_imps_snapshot(
 
     let edge_count = col_indices.len() as u64;
 
+    let emb_dim = if let Some(d) = args.embedding_dim {
+        d as usize
+    } else if args.vector_index.is_some() {
+        64usize
+    } else {
+        0usize
+    };
+
+    let manifold_vecs = if emb_dim > 0 {
+        let (_ro, _ci, vecs, _q) =
+            crate::commands::bench_vector::generate_manifold_graph_and_queries(
+                src_node_count as usize,
+                emb_dim,
+                args.communities.max(8) as usize,
+                1,
+                seed.wrapping_add(0xE3B0),
+            );
+        Some(vecs)
+    } else {
+        None
+    };
+
     writer.add_relation(
         graph.src_domain_id,
         graph.tgt_domain_id,
@@ -704,6 +727,21 @@ fn write_imps_snapshot(
     writer.set_relation_name(0, &graph.relation_name);
     if include_csc {
         writer.set_relation_include_csc(0, true);
+    }
+
+    if let Some(vecs) = manifold_vecs {
+        let mut emb_bytes = Vec::with_capacity(vecs.len() * 4);
+        for &v in &vecs {
+            emb_bytes.extend_from_slice(&v.to_le_bytes());
+        }
+        writer.add_attribute_to_domain(
+            graph.src_domain_id,
+            &args.embedding_attr,
+            impulse_graph::spec::BaseDataType::Float32 as u8,
+            emb_dim as u32,
+            emb_bytes,
+            None,
+        );
     }
 
     // Generate synthetic edge attributes aligned with CSR edge order
@@ -772,6 +810,16 @@ fn write_imps_snapshot(
             "_domain_index",
             index_data,
         );
+    }
+
+    if let Some(vspec_str) = &args.vector_index {
+        let vspec = crate::embeddings::VectorIndexSpec::parse(vspec_str)?;
+        writer.add_vamana_index(
+            graph.src_domain_id,
+            &vspec.attr_name,
+            &vspec.index_name,
+            &vspec.config,
+        )?;
     }
 
     writer.finalize()?;
