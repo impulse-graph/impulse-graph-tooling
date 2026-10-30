@@ -578,14 +578,30 @@ pub fn read_text_column_data(
                     payload_bytes.extend_from_slice(&v.to_le_bytes());
                 }
                 0x06 => {
-                    // Float32
-                    let v: f32 = s.parse().unwrap_or(0.0);
-                    payload_bytes.extend_from_slice(&v.to_le_bytes());
+                    // Float32 (scalar or D-dimensional inline vector)
+                    if dimension > 1 {
+                        let parsed = crate::embeddings::parse_inline_vector_str(s).unwrap_or_default();
+                        for d in 0..(dimension as usize) {
+                            let v = parsed.get(d).copied().unwrap_or(0.0f32);
+                            payload_bytes.extend_from_slice(&v.to_le_bytes());
+                        }
+                    } else {
+                        let v: f32 = s.parse().unwrap_or(0.0);
+                        payload_bytes.extend_from_slice(&v.to_le_bytes());
+                    }
                 }
                 0x07 => {
-                    // Float64
-                    let v: f64 = s.parse().unwrap_or(0.0);
-                    payload_bytes.extend_from_slice(&v.to_le_bytes());
+                    // Float64 (scalar or D-dimensional inline vector)
+                    if dimension > 1 {
+                        let parsed = crate::embeddings::parse_inline_vector_str(s).unwrap_or_default();
+                        for d in 0..(dimension as usize) {
+                            let v = parsed.get(d).copied().unwrap_or(0.0f32) as f64;
+                            payload_bytes.extend_from_slice(&v.to_le_bytes());
+                        }
+                    } else {
+                        let v: f64 = s.parse().unwrap_or(0.0);
+                        payload_bytes.extend_from_slice(&v.to_le_bytes());
+                    }
                 }
                 0x0B => {
                     // String

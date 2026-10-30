@@ -1,5 +1,8 @@
 use comfy_table::Table;
-use impulse_graph::spec::{IMPULSE_FEAT_4KB_PAGE_ALIGNED, IMPULSE_FEAT_CRYPTO_SIGNED};
+use impulse_graph::spec::{
+    VamanaMetric, VamanaQuantType, IMPULSE_FEAT_4KB_PAGE_ALIGNED, IMPULSE_FEAT_CRYPTO_SIGNED,
+    IMP_INDEX_VAMANA_ANN,
+};
 use impulse_graph::SnapshotReader;
 use serde_json::json;
 use std::error::Error;
@@ -51,7 +54,65 @@ pub fn run(file: &Path, format: &str, verbose: bool) -> Result<(), Box<dyn Error
             }));
         }
 
+        let mut indices = Vec::new();
+        for idx in reader.index_entries() {
+            let vamana_json = if idx.index_type == IMP_INDEX_VAMANA_ANN {
+                reader.parse_vamana_header(idx).ok().map(|vh| {
+                    let magic = vh.magic;
+                    let version = vh.version;
+                    let domain_id = vh.domain_id;
+                    let vec_attr_id = vh.vec_attr_id;
+                    let dimension = vh.dimension;
+                    let node_count = vh.node_count;
+                    let max_degree_r = vh.max_degree_r;
+                    let medoid_node_id = vh.medoid_node_id;
+                    let alpha = vh.alpha;
+                    let ef_construction = vh.ef_construction;
+                    let adj_slab_offset = vh.adj_slab_offset;
+                    let adj_slab_bytes = vh.adj_slab_bytes;
+                    let quant_code_offset = vh.quant_code_offset;
+                    let metric_str = VamanaMetric::from_u8(vh.metric)
+                        .map(|m| m.name())
+                        .unwrap_or("UNKNOWN");
+                    let quant_str = VamanaQuantType::from_u8(vh.quant_type)
+                        .map(|q| q.name())
+                        .unwrap_or("UNKNOWN");
+                    json!({
+                        "magic": format!("0x{:08X}", magic),
+                        "version": version,
+                        "domain_id": domain_id,
+                        "vec_attr_id": vec_attr_id,
+                        "dimension": dimension,
+                        "node_count": node_count,
+                        "max_degree_r": max_degree_r,
+                        "medoid_node_id": medoid_node_id,
+                        "alpha": alpha,
+                        "ef_construction": ef_construction,
+                        "metric": metric_str,
+                        "quant_type": quant_str,
+                        "adj_slab_offset": adj_slab_offset,
+                        "adj_slab_bytes": adj_slab_bytes,
+                        "quant_code_offset": quant_code_offset,
+                    })
+                })
+            } else {
+                None
+            };
+            indices.push(json!({
+                "index_id": idx.index_id,
+                "domain_id": idx.domain_id,
+                "relation_id": idx.relation_id,
+                "attribute_index": idx.attribute_index,
+                "index_type": idx.index_type,
+                "name": idx.name,
+                "data_offset": idx.data_offset,
+                "data_bytes": idx.data_bytes,
+                "vamana": vamana_json,
+            }));
+        }
+
         let custom_metadata = reader.get_metadata().unwrap_or_default();
+        let index_count = header.index_count;
 
         let output = json!({
             "file": file.to_string_lossy(),
@@ -62,9 +123,11 @@ pub fn run(file: &Path, format: &str, verbose: bool) -> Result<(), Box<dyn Error
                 "required_features": format!("0x{:016X}", header.required_features()),
                 "domain_count": header.domain_count(),
                 "relation_count": header.relation_count(),
+                "index_count": index_count,
             },
             "domains": domains,
             "relations": relations,
+            "indices": indices,
             "metadata": custom_metadata,
         });
 
@@ -187,6 +250,58 @@ pub fn run(file: &Path, format: &str, verbose: bool) -> Result<(), Box<dyn Error
             ]);
         }
         println!("{}", idx_table);
+
+        let vamana_entries: Vec<_> = reader
+            .index_entries()
+            .iter()
+            .filter(|e| e.index_type == IMP_INDEX_VAMANA_ANN)
+            .collect();
+        if !vamana_entries.is_empty() {
+            println!();
+            println!("--- VAMANA ANN VECTOR INDICES (IMP_INDEX_VAMANA_ANN = 0x08) ---");
+            let mut v_table = Table::new();
+            v_table.set_header(vec![
+                "Index Name",
+                "Dom",
+                "Attr",
+                "Dim",
+                "Nodes",
+                "R",
+                "Medoid",
+                "Alpha",
+                "EF",
+                "Metric",
+                "Quant",
+                "Adj Off",
+                "Quant Off",
+            ]);
+            for entry in vamana_entries {
+                if let Ok(vh) = reader.parse_vamana_header(entry) {
+                    let metric_str = VamanaMetric::from_u8(vh.metric)
+                        .map(|m| m.name())
+                        .unwrap_or("?");
+                    let quant_str = VamanaQuantType::from_u8(vh.quant_type)
+                        .map(|q| q.name())
+                        .unwrap_or("?");
+                    v_table.add_row(vec![
+                        entry.name.clone(),
+                        vh.domain_id.to_string(),
+                        vh.vec_attr_id.to_string(),
+                        vh.dimension.to_string(),
+                        vh.node_count.to_string(),
+                        vh.max_degree_r.to_string(),
+                        vh.medoid_node_id.to_string(),
+                        format!("{:.2}", vh.alpha),
+                        vh.ef_construction.to_string(),
+                        metric_str.to_string(),
+                        quant_str.to_string(),
+                        format!("0x{:X}", vh.adj_slab_offset),
+                        format!("0x{:X}", vh.quant_code_offset),
+                    ]);
+                }
+            }
+            println!("{}", v_table);
+        }
     }
 
     if verbose {

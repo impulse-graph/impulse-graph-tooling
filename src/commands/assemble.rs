@@ -16,7 +16,11 @@ fn get_opcode(name: &str) -> Option<u8> {
         "OP_LOAD_CONST_STR_PREFIX" => Some(0x07),
         "OP_LOAD_INLINE_ARRAY" => Some(0x08),
         "OP_INIT_MOCK_GRAPH" => Some(0x09),
+        "OP_LOAD_INLINE_SET" => Some(0x0A),
+        "OP_INIT_MOCK_NODE_ATTR" => Some(0x0B),
+        "OP_INIT_MOCK_EDGE_ATTR" => Some(0x0C),
         "OP_CSR_WALK_2HOP" => Some(0x0E),
+        "OP_CSR_WALK_STATE" => Some(0x0F),
 
         "OP_CSR_WALK" => Some(0x10),
         "OP_CSR_WALK_FILTERED" => Some(0x11),
@@ -130,8 +134,57 @@ fn get_opcode(name: &str) -> Option<u8> {
         "OP_COLLECT_ARRAY" => Some(0x91),
         "OP_MAP_DENSE_TO_KEYS" => Some(0x92),
         "OP_COLLECT_VALUE_MAP" => Some(0x93),
-        "OP_COALESCE_BITSET" => Some(0x94),
-        "OP_COALESCE_DENSE_ARRAY" => Some(0x95),
+        "OP_COALESCE_BITSET" | "OP_DENSE_WALK_REDUCE" => Some(0x94),
+        "OP_COALESCE_DENSE_ARRAY" | "OP_DENSE_WALK_DIRECT_STORE" => Some(0x95),
+
+        // Edge Stream Shader Opcodes (0xA0 - 0xBF)
+        "OP_COO_WALK_STREAM" => Some(0xA0),
+        "OP_STREAM_FUNC_BEGIN" => Some(0xA1),
+        "OP_STREAM_FUNC_END" => Some(0xA2),
+        "OP_STREAM_LOAD_SRC" => Some(0xA3),
+        "OP_STREAM_LOAD_EDGE" => Some(0xA4),
+        "OP_STREAM_MATH_ADD" => Some(0xA5),
+        "OP_STREAM_MATH_DIV" => Some(0xA6),
+        "OP_STREAM_FILTER" => Some(0xA7),
+        "OP_STREAM_REDUCE" => Some(0xA8),
+        "OP_CSR_WALK_STREAM" => Some(0xA9),
+        "OP_CSC_WALK_STREAM" => Some(0xAA),
+        "OP_STREAM_LOAD_TGT" => Some(0xAB),
+        "OP_STREAM_MATH_SUB" => Some(0xAC),
+        "OP_STREAM_MATH_MUL" => Some(0xAD),
+        "OP_STREAM_MATH_MOD" => Some(0xAE),
+        "OP_STREAM_MATH_UNARY" => Some(0xAF),
+        "OP_STREAM_CMP_EQ" => Some(0xB0),
+        "OP_STREAM_CMP_NEQ" => Some(0xB1),
+        "OP_STREAM_CMP_GT" => Some(0xB2),
+        "OP_STREAM_CMP_LT" => Some(0xB3),
+        "OP_STREAM_LOGIC_AND" => Some(0xB4),
+        "OP_STREAM_LOGIC_OR" => Some(0xB5),
+        "OP_STREAM_LOGIC_NOT" => Some(0xB6),
+        "OP_STREAM_SELECT" => Some(0xB7),
+        "OP_STREAM_REDUCE_ARGMIN" => Some(0xB8),
+        "OP_STREAM_REDUCE_ARGMAX" => Some(0xB9),
+        "OP_STREAM_LOAD_SRC_ID" => Some(0xBA),
+        "OP_STREAM_LOAD_TGT_ID" => Some(0xBB),
+        "OP_STREAM_LOAD_EDGE_ID" => Some(0xBC),
+        "OP_STREAM_LOAD_CONST" => Some(0xBD),
+        "OP_STREAM_YIELD" => Some(0xBE),
+        "OP_STREAM_SCATTER_REDUCE" => Some(0xBF),
+
+        // Multi-Lane Bit-Sliced Execution & Vector ANN Opcodes (0xC0 - 0xCB)
+        "OP_LANE_INIT_SEEDS" => Some(0xC0),
+        "OP_LANE_INIT_GROUPS" => Some(0xC1),
+        "OP_LANE_SET_EDGE_MASK" => Some(0xC2),
+        "OP_LANE_CSR_WALK" => Some(0xC3),
+        "OP_LANE_CSC_WALK" => Some(0xC4),
+        "OP_LANE_PRUNE_MASK" => Some(0xC5),
+        "OP_LANE_FILTER_QUORUM" => Some(0xC6),
+        "OP_LANE_REDUCE_AND" => Some(0xC7),
+        "OP_LANE_REDUCE_ATTR" => Some(0xC8),
+        "OP_LANE_SET_COVER" => Some(0xC9),
+        "OP_VECTOR_ANN_SEARCH" => Some(0xCA),
+        "OP_VECTOR_RERANK_DOT" => Some(0xCB),
+
         _ if name.starts_with("OP_RESERVED_") => {
             let hex_part = name.strip_prefix("OP_RESERVED_").unwrap();
             u8::from_str_radix(hex_part, 16).ok()
@@ -282,6 +335,11 @@ pub fn run(input_path: &Path, output_path: &Path) -> Result<(), Box<dyn std::err
                     // E.g. OP_EWISE_ADD R4, R1, R2, BINARY_OP_ADD
                     dst_str = args[0].to_string();
                     payload_str = format!("{} | {} | {}", args[1], args[2], args[3]);
+                }
+                5 => {
+                    // E.g. OP_VECTOR_ANN_SEARCH Rdst, b0, b1, b2, b3
+                    dst_str = args[0].to_string();
+                    payload_str = format!("{} | {} | {} | {}", args[1], args[2], args[3], args[4]);
                 }
                 _ => {
                     return Err(format!(
@@ -466,11 +524,19 @@ fn parse_payload(
         return resolve_single_val(trimmed, symbols);
     }
 
-    if parts.len() == 3 && is_register_str(parts[0]) && is_register_str(parts[1]) {
-        let src1 = parse_register(parts[0])? as u32;
-        let src2 = parse_register(parts[1])? as u32;
-        let op_id = resolve_single_val(parts[2], symbols)?;
-        return Ok(src1 | (src2 << 8) | (op_id << 16));
+    if parts.len() == 4 {
+        let b0 = resolve_single_val(parts[0], symbols)? & 0xFF;
+        let b1 = resolve_single_val(parts[1], symbols)? & 0xFF;
+        let b2 = resolve_single_val(parts[2], symbols)? & 0xFF;
+        let b3 = resolve_single_val(parts[3], symbols)? & 0xFF;
+        return Ok(b0 | (b1 << 8) | (b2 << 16) | (b3 << 24));
+    }
+
+    if parts.len() == 3 {
+        let b0 = resolve_single_val(parts[0], symbols)? & 0xFF;
+        let b1 = resolve_single_val(parts[1], symbols)? & 0xFF;
+        let hi16 = resolve_single_val(parts[2], symbols)? & 0xFFFF;
+        return Ok(b0 | (b1 << 8) | (hi16 << 16));
     }
 
     let mut packed = 0u32;
@@ -497,6 +563,8 @@ fn lookup_constant(s: &str) -> Option<u32> {
         "BINARY_OP_MAX" => Some(3),
         "BINARY_OP_AND" => Some(4),
         "BINARY_OP_OR" => Some(5),
+        "BINARY_OP_ARGMIN" => Some(6),
+        "BINARY_OP_ARGMAX" => Some(7),
         _ => None,
     }
 }

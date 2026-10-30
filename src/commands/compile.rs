@@ -17,6 +17,8 @@ struct Manifest {
     version: Option<String>,
     domains: Vec<DomainDef>,
     relations: Vec<RelationDef>,
+    embeddings: Option<Vec<String>>,
+    vector_indices: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -371,6 +373,15 @@ fn read_text_edge_endpoints(
 }
 
 pub fn run(manifest_path: &Path, output_path: &Path) -> Result<(), Box<dyn Error>> {
+    run_with_options(manifest_path, output_path, &[], &[])
+}
+
+pub fn run_with_options(
+    manifest_path: &Path,
+    output_path: &Path,
+    cli_embeddings: &[String],
+    cli_vector_indices: &[String],
+) -> Result<(), Box<dyn Error>> {
     let is_stdout = output_path.to_str() == Some("-") || output_path.to_str() == Some("stdout");
 
     if !is_stdout {
@@ -618,6 +629,9 @@ pub fn run(manifest_path: &Path, output_path: &Path) -> Result<(), Box<dyn Error
             .as_deref()
             .unwrap_or(default_rel_name);
         writer.set_relation_name(rel_idx, rel_name);
+        if manifest.relations[rel_idx].include_csc.unwrap_or(false) {
+            writer.set_relation_include_csc(rel_idx, true);
+        }
 
         for attr in cr.attributes {
             writer.add_attribute_to_relation(
@@ -645,6 +659,62 @@ pub fn run(manifest_path: &Path, output_path: &Path) -> Result<(), Box<dyn Error
                 );
             }
         }
+    }
+
+    // Attach external sidecar embeddings from manifest.embeddings + CLI --embeddings
+    let mut all_embedding_specs: Vec<String> = manifest.embeddings.clone().unwrap_or_default();
+    all_embedding_specs.extend_from_slice(cli_embeddings);
+    for emb_spec_str in &all_embedding_specs {
+        let espec = crate::embeddings::EmbeddingAttachmentSpec::parse(emb_spec_str)?;
+        let dom = manifest
+            .domains
+            .iter()
+            .find(|d| d.name == espec.domain_name || d.id.to_string() == espec.domain_name)
+            .ok_or_else(|| {
+                format!(
+                    "Domain '{}' in --embeddings spec not found in manifest",
+                    espec.domain_name
+                )
+            })?;
+        let resolved_path = if espec.file_path.is_absolute() || espec.file_path.exists() {
+            espec.file_path.clone()
+        } else {
+            base_dir.join(&espec.file_path)
+        };
+        let loaded = crate::embeddings::load_embeddings_from_path(
+            &resolved_path,
+            espec.selector.as_deref(),
+            espec.normalize,
+        )?;
+        let dom_map = domain_node_maps.get(&dom.id);
+        let mut dom_node_count = dom_map.map(|m| m.len()).unwrap_or(0);
+        if dom_node_count == 0 && loaded.num_vectors > 0 {
+            dom_node_count = loaded.num_vectors;
+            writer.set_domain_node_count(dom.id, dom_node_count as u64);
+        }
+        let aligned_vecs = loaded.align_to_domain(dom_node_count, dom_map)?;
+        let mut vec_bytes = Vec::with_capacity(aligned_vecs.len() * 4);
+        for &v in &aligned_vecs {
+            vec_bytes.extend_from_slice(&v.to_le_bytes());
+        }
+        if !is_stdout {
+            println!(
+                "  Attached embedding attribute '{}.{}' ({}x{} Float32 from {})",
+                dom.name,
+                espec.attr_name,
+                dom_node_count,
+                loaded.dimension,
+                resolved_path.display()
+            );
+        }
+        writer.add_attribute_to_domain(
+            dom.id,
+            &espec.attr_name,
+            impulse_graph::spec::BaseDataType::Float32 as u8,
+            loaded.dimension as u32,
+            vec_bytes,
+            None,
+        );
     }
 
     // Add Domain Indexes
@@ -713,6 +783,37 @@ pub fn run(manifest_path: &Path, output_path: &Path) -> Result<(), Box<dyn Error
             "_domain_index",
             index_data,
         );
+    }
+
+    // Build Vamana ANN Secondary Indices (IMP_INDEX_VAMANA_ANN = 8)
+    let mut all_vector_indices: Vec<String> = manifest.vector_indices.clone().unwrap_or_default();
+    all_vector_indices.extend_from_slice(cli_vector_indices);
+    for v_spec_str in &all_vector_indices {
+        let vspec = crate::embeddings::VectorIndexSpec::parse(v_spec_str)?;
+        let dom = manifest
+            .domains
+            .iter()
+            .find(|d| d.name == vspec.domain_name || d.id.to_string() == vspec.domain_name)
+            .ok_or_else(|| {
+                format!(
+                    "Domain '{}' in --vector-index spec not found in manifest",
+                    vspec.domain_name
+                )
+            })?;
+        if !is_stdout {
+            println!(
+                "  Building IMP_INDEX_VAMANA_ANN (0x08) '{}' on {}.{} (R={}, L={}, alpha={:.2}, metric={}, quant={})...",
+                vspec.index_name,
+                dom.name,
+                vspec.attr_name,
+                vspec.config.max_degree_r,
+                vspec.config.ef_construction,
+                vspec.config.alpha,
+                vspec.config.metric.name(),
+                vspec.config.quant_type.name()
+            );
+        }
+        writer.add_vamana_index(dom.id, &vspec.attr_name, &vspec.index_name, &vspec.config)?;
     }
 
     if is_stdout {

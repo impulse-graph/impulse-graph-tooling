@@ -131,12 +131,60 @@ fn get_opcode_name(opcode: u8) -> &'static str {
         0x94 => "OP_COALESCE_BITSET",
         0x95 => "OP_COALESCE_DENSE_ARRAY",
 
-        0x0A => "OP_RESERVED_0A",
-        0x0B => "OP_RESERVED_0B",
-        0x0C => "OP_RESERVED_0C",
+        // Edge Stream Shader Opcodes (0xA0 - 0xBF)
+        0xA0 => "OP_COO_WALK_STREAM",
+        0xA1 => "OP_STREAM_FUNC_BEGIN",
+        0xA2 => "OP_STREAM_FUNC_END",
+        0xA3 => "OP_STREAM_LOAD_SRC",
+        0xA4 => "OP_STREAM_LOAD_EDGE",
+        0xA5 => "OP_STREAM_MATH_ADD",
+        0xA6 => "OP_STREAM_MATH_DIV",
+        0xA7 => "OP_STREAM_FILTER",
+        0xA8 => "OP_STREAM_REDUCE",
+        0xA9 => "OP_CSR_WALK_STREAM",
+        0xAA => "OP_CSC_WALK_STREAM",
+        0xAB => "OP_STREAM_LOAD_TGT",
+        0xAC => "OP_STREAM_MATH_SUB",
+        0xAD => "OP_STREAM_MATH_MUL",
+        0xAE => "OP_STREAM_MATH_MOD",
+        0xAF => "OP_STREAM_MATH_UNARY",
+        0xB0 => "OP_STREAM_CMP_EQ",
+        0xB1 => "OP_STREAM_CMP_NEQ",
+        0xB2 => "OP_STREAM_CMP_GT",
+        0xB3 => "OP_STREAM_CMP_LT",
+        0xB4 => "OP_STREAM_LOGIC_AND",
+        0xB5 => "OP_STREAM_LOGIC_OR",
+        0xB6 => "OP_STREAM_LOGIC_NOT",
+        0xB7 => "OP_STREAM_SELECT",
+        0xB8 => "OP_STREAM_REDUCE_ARGMIN",
+        0xB9 => "OP_STREAM_REDUCE_ARGMAX",
+        0xBA => "OP_STREAM_LOAD_SRC_ID",
+        0xBB => "OP_STREAM_LOAD_TGT_ID",
+        0xBC => "OP_STREAM_LOAD_EDGE_ID",
+        0xBD => "OP_STREAM_LOAD_CONST",
+        0xBE => "OP_STREAM_YIELD",
+        0xBF => "OP_STREAM_SCATTER_REDUCE",
+
+        // Multi-Lane Bit-Sliced Execution & Vector ANN Opcodes (0xC0 - 0xCB)
+        0xC0 => "OP_LANE_INIT_SEEDS",
+        0xC1 => "OP_LANE_INIT_GROUPS",
+        0xC2 => "OP_LANE_SET_EDGE_MASK",
+        0xC3 => "OP_LANE_CSR_WALK",
+        0xC4 => "OP_LANE_CSC_WALK",
+        0xC5 => "OP_LANE_PRUNE_MASK",
+        0xC6 => "OP_LANE_FILTER_QUORUM",
+        0xC7 => "OP_LANE_REDUCE_AND",
+        0xC8 => "OP_LANE_REDUCE_ATTR",
+        0xC9 => "OP_LANE_SET_COVER",
+        0xCA => "OP_VECTOR_ANN_SEARCH",
+        0xCB => "OP_VECTOR_RERANK_DOT",
+
+        0x0A => "OP_LOAD_INLINE_SET",
+        0x0B => "OP_INIT_MOCK_NODE_ATTR",
+        0x0C => "OP_INIT_MOCK_EDGE_ATTR",
         0x0D => "OP_RESERVED_0D",
-        0x0E => "OP_RESERVED_0E",
-        0x0F => "OP_RESERVED_0F",
+        0x0E => "OP_CSR_WALK_2HOP",
+        0x0F => "OP_CSR_WALK_STATE",
         0x28 => "OP_RESERVED_28",
         0x29 => "OP_RESERVED_29",
         0x2B => "OP_RESERVED_2B",
@@ -186,6 +234,8 @@ fn get_binary_op_name(id: u32) -> &'static str {
         3 => "BINARY_OP_MAX",
         4 => "BINARY_OP_AND",
         5 => "BINARY_OP_OR",
+        6 => "BINARY_OP_ARGMIN",
+        7 => "BINARY_OP_ARGMAX",
         _ => "BINARY_OP_UNKNOWN",
     }
 }
@@ -195,14 +245,26 @@ pub fn run(input_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let mut buffer = Vec::new();
     file.read_to_end(&mut buffer)?;
 
+    let text = disassemble_bytes(&buffer, Some(input_path))?;
+    print!("{}", text);
+    Ok(())
+}
+
+pub fn disassemble_bytes(
+    buffer: &[u8],
+    input_path: Option<&Path>,
+) -> Result<String, Box<dyn std::error::Error>> {
     if buffer.len() % 8 != 0 {
         return Err("Binary bytecode file size must be a multiple of 8 bytes".into());
     }
 
     let instruction_count = buffer.len() / 8;
-    println!("\n# Textual Disassembly of {:?}", input_path);
-    println!("; Instruction Count: {}", instruction_count);
-    println!("; -------------------------------------------------------------");
+    let mut out = String::new();
+    if let Some(p) = input_path {
+        out.push_str(&format!("\n# Textual Disassembly of {:?}\n", p));
+    }
+    out.push_str(&format!("; Instruction Count: {}\n", instruction_count));
+    out.push_str("; -------------------------------------------------------------\n");
 
     for pc in 0..instruction_count {
         let offset = pc * 8;
@@ -234,8 +296,8 @@ pub fn run(input_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
         // Decode operands based on opcode category
         match instr.opcode {
             // No operands / halt
-            0x00 | 0x56 | 0xFF => {
-                // OP_NOP, OP_RET, OP_HALT
+            0x00 | 0x01 | 0x56 | 0xA2 | 0xFF => {
+                // OP_HALT, OP_NOP, OP_RET, OP_STREAM_FUNC_END
             }
             // Jumps / branches (rel offset in payload)
             0x50..=0x52 => {
@@ -250,23 +312,24 @@ pub fn run(input_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
                 output_str.push_str(&format!("R{}, {:+}", instr.dst_reg, offset));
             }
             // Constant Float loader
-            0x05 => {
+            0x06 => {
                 // OP_LOAD_CONST_FLOAT
                 let fval = f32::from_bits(instr.payload);
                 output_str.push_str(&format!("R{}, {}f", instr.dst_reg, fval));
             }
             // Constant Int / Prefix loaders
-            0x03 | 0x04 | 0x06 | 0x12 | 0x71 => {
+            0x04 | 0x05 | 0x07 | 0x12 | 0x71 => {
                 // OP_LOAD_CONST_INT, OP_MAP_KEYS_TO_DENSE, OP_LOAD_CONST_STR_PREFIX, OP_CSR_DEGREE, OP_CLEAR_REG
                 output_str.push_str(&format!("R{}, {}", instr.dst_reg, instr.payload));
             }
             // 2-operand reg-to-reg / mapping
-            0x01 | 0x02 | 0x33 | 0x35 | 0x54 | 0x70 | 0x90 | 0x91 | 0x92 => {
-                // OP_INIT_INPUT_NODE, OP_INIT_INPUT_SET, OP_SET_CARDINALITY, OP_VECTOR_REDUCE_SUM, OP_STABLE_CHECK, OP_MOV, OP_COLLECT_BITSET, OP_COLLECT_ARRAY, OP_MAP_DENSE_TO_KEYS
+            0x02 | 0x03 | 0x33 | 0x35 | 0x54 | 0x70 | 0x90 | 0x91 | 0x92 | 0xC7 => {
+                // OP_INIT_INPUT_NODE, OP_INIT_INPUT_SET, OP_SET_CARDINALITY, OP_VECTOR_REDUCE_SUM, OP_STABLE_CHECK, OP_MOV, OP_COLLECT_BITSET, OP_COLLECT_ARRAY, OP_MAP_DENSE_TO_KEYS, OP_LANE_REDUCE_AND
                 output_str.push_str(&format!("R{}, R{}", instr.dst_reg, instr.payload));
             }
             // CSR Walk: payload holds src_reg (lower 16) and rel_id (upper 16)
-            0x10 | 0x11 | 0x14 | 0x15 | 0x16 | 0x17 => {
+            0x10 | 0x11 | 0x14 | 0x15 | 0x16 | 0x17 | 0x84 | 0x85 | 0x86 | 0x87 | 0x88 | 0x8E
+            | 0x8F | 0x94 | 0x95 | 0xC3 | 0xC4 => {
                 let src_reg = instr.payload & 0xFFFF;
                 let rel_id = (instr.payload >> 16) & 0xFFFF;
                 output_str.push_str(&format!("R{}, R{}, REL_{}", instr.dst_reg, src_reg, rel_id));
@@ -329,16 +392,17 @@ pub fn run(input_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
                 ));
             }
             _ => {
-                // Default fallback
+                // Default fallback (can be re-assembled verbatim via named args)
                 output_str.push_str(&format!(
-                    "R{}, flags={}, payload=0x{:08X}",
+                    "dst=R{}, flags={}, payload=0x{:08X}",
                     instr.dst_reg, flags_str, instr.payload
                 ));
             }
         }
 
-        println!("{}", output_str);
+        out.push_str(&output_str);
+        out.push('\n');
     }
-    println!("; -------------------------------------------------------------");
-    Ok(())
+    out.push_str("; -------------------------------------------------------------\n");
+    Ok(out)
 }

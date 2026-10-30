@@ -11,8 +11,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             snapshot,
             bytecode,
             input_val,
+            verify,
+            never_corrupt,
+            opt_disable_mask,
+            diff_opt,
+            fault_delay,
+            fault_repeat,
+            branch_cov,
         } => {
-            commands::run::run(&snapshot, &bytecode, input_val)?;
+            commands::run::run_with_options(
+                &snapshot,
+                &bytecode,
+                input_val,
+                &commands::run::RunVerifyOptions {
+                    verify,
+                    never_corrupt,
+                    opt_disable_mask,
+                    diff_opt,
+                    fault_sim: fault_delay.map(|d| (d, fault_repeat)),
+                    branch_cov,
+                },
+            )?;
         }
         Commands::Compile {
             input,
@@ -21,8 +40,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } => {
             commands::script_compile::run(&input, output.as_deref(), emit_ir)?;
         }
-        Commands::Build { manifest, output } => {
-            commands::compile::run(&manifest, &output)?;
+        Commands::Build {
+            manifest,
+            output,
+            embeddings,
+            vector_index,
+        } => {
+            commands::compile::run_with_options(&manifest, &output, &embeddings, &vector_index)?;
+        }
+        Commands::BenchVector(args) => {
+            commands::bench_vector::run(&args)?;
         }
         Commands::Inspect {
             file,
@@ -76,8 +103,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Snapshot Namespace (Snapshots / Datasets Only)
         Commands::Snapshot { command } => match command {
-            SnapshotCommands::Build { manifest, output } => {
-                commands::compile::run(&manifest, &output)?;
+            SnapshotCommands::Build {
+                manifest,
+                output,
+                embeddings,
+                vector_index,
+            } => {
+                commands::compile::run_with_options(
+                    &manifest,
+                    &output,
+                    &embeddings,
+                    &vector_index,
+                )?;
+            }
+            SnapshotCommands::AttachEmbeddings {
+                input,
+                output,
+                embeddings,
+                vector_index,
+            } => {
+                commands::optimize::run_with_options(
+                    &input,
+                    &output,
+                    &commands::optimize::OptimizeOptions {
+                        embeddings,
+                        vector_indices: vector_index,
+                        ..Default::default()
+                    },
+                )?;
+            }
+            SnapshotCommands::BenchVector(args) => {
+                commands::bench_vector::run(&args)?;
             }
             SnapshotCommands::Merge {
                 base,
@@ -97,28 +153,48 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 file,
                 strict_alignment,
                 public_key,
+                quick_check,
+                deep_audit,
             } => {
-                commands::validate::run(&file, strict_alignment, public_key.as_deref())?;
+                commands::validate::run_with_options(
+                    &file,
+                    &commands::validate::ValidateOptions {
+                        strict_alignment,
+                        public_key: public_key.as_deref(),
+                        quick_check,
+                        deep_audit,
+                    },
+                )?;
             }
             SnapshotCommands::Optimize {
                 input,
                 output,
                 rcm,
                 degree_sort,
+                vamana_locality,
+                rebuild_vector_index,
+                embeddings,
+                vector_index,
                 csc,
                 encoding,
                 strip_mappings,
                 strip_properties,
             } => {
-                commands::optimize::run(
+                commands::optimize::run_with_options(
                     &input,
                     &output,
-                    rcm,
-                    degree_sort,
-                    csc,
-                    encoding.as_deref(),
-                    strip_mappings,
-                    strip_properties,
+                    &commands::optimize::OptimizeOptions {
+                        rcm,
+                        degree_sort,
+                        vamana_locality,
+                        csc,
+                        encoding,
+                        strip_mappings,
+                        strip_properties,
+                        rebuild_vector_index,
+                        embeddings,
+                        vector_indices: vector_index,
+                    },
                 )?;
             }
             SnapshotCommands::Diff { base, target } => {
@@ -135,8 +211,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 input,
                 output,
                 domain,
+                vector_index,
             } => {
-                commands::safetensors::run(&input, &output, &domain)?;
+                let vspecs: Vec<String> = vector_index.into_iter().collect();
+                commands::safetensors::run_with_options(&input, &output, &domain, &vspecs)?;
             }
             SnapshotCommands::Generate(args) => {
                 commands::generate::run(&args)?;
