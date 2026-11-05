@@ -343,13 +343,25 @@ pub fn run_with_options(
                     quant_type: quant,
                     seed: 0x5641_4D41_2026_0009,
                 };
-                // Find attribute name by vec_attr_id
+                // Find attribute name by relation_id and attribute_index
                 let attr_name = reader
                     .relations()
-                    .iter()
-                    .find(|r| r.src_domain_id == hdr.domain_id)
-                    .and_then(|r| r.attributes.get(hdr.vec_attr_id as usize))
+                    .get(entry.relation_id as usize)
+                    .and_then(|r| r.attributes.get(entry.attribute_index as usize))
                     .map(|a| a.name.clone())
+                    .or_else(|| {
+                        reader
+                            .relations()
+                            .iter()
+                            .find(|r| {
+                                r.src_domain_id == hdr.domain_id
+                                    && (r.edge_count == 0
+                                        || r.name.ends_with("_nodes")
+                                        || r.attributes.iter().any(|a| a.dimension > 1))
+                            })
+                            .and_then(|r| r.attributes.get(hdr.vec_attr_id as usize))
+                            .map(|a| a.name.clone())
+                    })
                     .unwrap_or_else(|| "embedding".to_string());
                 writer.add_vamana_index(hdr.domain_id, &attr_name, &entry.name, &cfg)?;
             } else {
@@ -358,7 +370,24 @@ pub fn run_with_options(
                 if let Some((old_to_new, new_to_old)) = domain_perms.get(&hdr.domain_id) {
                     let permuted =
                         permute_vamana_index(&hdr, adj_slab, quant_slab, old_to_new, new_to_old)?;
-                    writer.add_built_vamana_index(&entry.name, permuted);
+                    writer.add_built_vamana_index_with_relation(
+                        &entry.name,
+                        entry.relation_id,
+                        permuted,
+                    );
+                } else {
+                    let start = entry.data_offset as usize;
+                    let len = entry.data_bytes as usize;
+                    if start + len <= snapshot_bytes.len() {
+                        writer.add_index(
+                            entry.domain_id,
+                            entry.relation_id,
+                            entry.attribute_index,
+                            entry.index_type,
+                            &entry.name,
+                            snapshot_bytes[start..start + len].to_vec(),
+                        );
+                    }
                 }
             }
         } else {
