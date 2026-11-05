@@ -168,10 +168,9 @@ pub fn read_parquet_column_data(
         let batch = batch_res?;
         let schema = batch.schema();
 
-        for &(col_name, _, _) in columns {
+        for (col_name, acc) in &mut accumulators {
             if let Ok(col_idx) = schema.index_of(col_name) {
                 let array = batch.column(col_idx);
-                let acc = accumulators.get_mut(col_name).unwrap();
 
                 let len = array.len();
                 for i in 0..len {
@@ -515,8 +514,7 @@ pub fn read_text_column_data(
 
     for record_res in csv_reader.records() {
         let record = record_res?;
-        for &(col_name, _, _) in columns {
-            let vec = raw_rows.get_mut(col_name).unwrap();
+        for (col_name, vec) in &mut raw_rows {
             if let Some(&idx) = header_indices.get(col_name) {
                 if idx < record.len() {
                     let val = record.get(idx).map(|s| s.trim()).unwrap_or("");
@@ -580,7 +578,8 @@ pub fn read_text_column_data(
                 0x06 => {
                     // Float32 (scalar or D-dimensional inline vector)
                     if dimension > 1 {
-                        let parsed = crate::embeddings::parse_inline_vector_str(s).unwrap_or_default();
+                        let parsed =
+                            crate::embeddings::parse_inline_vector_str(s).unwrap_or_default();
                         for d in 0..(dimension as usize) {
                             let v = parsed.get(d).copied().unwrap_or(0.0f32);
                             payload_bytes.extend_from_slice(&v.to_le_bytes());
@@ -593,7 +592,8 @@ pub fn read_text_column_data(
                 0x07 => {
                     // Float64 (scalar or D-dimensional inline vector)
                     if dimension > 1 {
-                        let parsed = crate::embeddings::parse_inline_vector_str(s).unwrap_or_default();
+                        let parsed =
+                            crate::embeddings::parse_inline_vector_str(s).unwrap_or_default();
                         for d in 0..(dimension as usize) {
                             let v = parsed.get(d).copied().unwrap_or(0.0f32) as f64;
                             payload_bytes.extend_from_slice(&v.to_le_bytes());
@@ -646,6 +646,14 @@ pub fn read_text_column_data(
     }
 
     Ok(result)
+}
+
+/// Fallback CSV reader forwarding to `read_text_column_data`.
+pub fn read_csv_column_data(
+    file_path: &Path,
+    columns: &[(&str, Option<&str>, Option<u32>)],
+) -> Result<HashMap<String, NativeColumn>, Box<dyn Error>> {
+    read_text_column_data(file_path, columns)
 }
 
 /// Legacy reader maintained for backward compatibility.

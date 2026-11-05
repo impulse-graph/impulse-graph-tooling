@@ -1,16 +1,17 @@
 use impulse_graph::ffi::{
     impulse_instruction_t, impulse_snapshot_close, impulse_snapshot_max_node_count,
-    impulse_snapshot_open, impulse_snapshot_t, impulse_test_control, impulse_test_set_never_corrupt,
-    impulse_test_set_opt_disable_mask, impulse_vm_branch_coverage_reset,
-    impulse_vm_branch_coverage_set_enabled, impulse_vm_branch_coverage_summary,
-    impulse_vm_context_bitset_get_word, impulse_vm_context_create, impulse_vm_context_destroy,
-    impulse_vm_context_get_double_vector, impulse_vm_context_get_float_vector,
-    impulse_vm_context_get_node_vector, impulse_vm_context_lane_frontier_active_mask,
-    impulse_vm_context_lane_frontier_data, impulse_vm_context_lane_frontier_node_count,
-    impulse_vm_context_lane_frontier_num_lanes, impulse_vm_context_lane_frontier_width,
-    impulse_vm_context_node_vector_size, impulse_vm_context_t, impulse_vm_execute,
-    impulse_vm_state_t, impulse_vm_validate, IMPULSE_TESTCTRL_FAULT_CONFIG,
-    IMPULSE_TESTCTRL_FAULT_INSTALL, IMPULSE_TESTCTRL_NEVER_CORRUPT, IMPULSE_TESTCTRL_OPTIMIZATIONS,
+    impulse_snapshot_open, impulse_snapshot_t, impulse_test_control,
+    impulse_test_set_never_corrupt, impulse_test_set_opt_disable_mask,
+    impulse_vm_branch_coverage_reset, impulse_vm_branch_coverage_set_enabled,
+    impulse_vm_branch_coverage_summary, impulse_vm_context_bitset_get_word,
+    impulse_vm_context_create, impulse_vm_context_destroy, impulse_vm_context_get_double_vector,
+    impulse_vm_context_get_float_vector, impulse_vm_context_get_node_vector,
+    impulse_vm_context_lane_frontier_active_mask, impulse_vm_context_lane_frontier_data,
+    impulse_vm_context_lane_frontier_node_count, impulse_vm_context_lane_frontier_num_lanes,
+    impulse_vm_context_lane_frontier_width, impulse_vm_context_node_vector_size,
+    impulse_vm_context_t, impulse_vm_execute, impulse_vm_state_t, impulse_vm_validate,
+    IMPULSE_TESTCTRL_FAULT_CONFIG, IMPULSE_TESTCTRL_FAULT_INSTALL, IMPULSE_TESTCTRL_NEVER_CORRUPT,
+    IMPULSE_TESTCTRL_OPTIMIZATIONS,
 };
 use std::ffi::CString;
 use std::fs::File;
@@ -296,7 +297,10 @@ pub fn run_with_options(
             let handle = ret_val as usize;
             let len = unsafe { impulse_vm_context_node_vector_size(ctx, handle) };
             let ptr = unsafe { impulse_vm_context_get_node_vector(ctx, handle) };
-            println!("Output Node/UInt64 Vector Handle: {} (length={})", handle, len);
+            println!(
+                "Output Node/UInt64 Vector Handle: {} (length={})",
+                handle, len
+            );
             if !ptr.is_null() && len > 0 {
                 let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
                 let print_len = len.min(20);
@@ -306,12 +310,18 @@ pub fn run_with_options(
         0x08 => {
             // TYPE_FLOAT
             let fval = f32::from_bits(ret_val as u32);
-            println!("Scalar Float Return Value: {:.6} (0x{:08X})", fval, ret_val as u32);
+            println!(
+                "Scalar Float Return Value: {:.6} (0x{:08X})",
+                fval, ret_val as u32
+            );
         }
         0x09 => {
             // TYPE_DOUBLE
             let dval = f64::from_bits(ret_val);
-            println!("Scalar Double Return Value: {:.6} (0x{:016X})", dval, ret_val);
+            println!(
+                "Scalar Double Return Value: {:.6} (0x{:016X})",
+                dval, ret_val
+            );
         }
         0x0C => {
             // TYPE_FLOAT_VECTOR
@@ -353,7 +363,10 @@ pub fn run_with_options(
                         first_values.push((i, val));
                     }
                 }
-                println!("Output Double Vector Handle: {} (first non-zero: {:?})", handle, first_values);
+                println!(
+                    "Output Double Vector Handle: {} (first non-zero: {:?})",
+                    handle, first_values
+                );
             }
         }
         0x10 => {

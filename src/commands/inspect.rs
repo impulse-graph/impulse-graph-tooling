@@ -9,28 +9,109 @@ use std::error::Error;
 use std::fs;
 use std::path::Path;
 
+#[derive(Debug, Clone, Default)]
+pub struct InspectOptions<'a> {
+    pub format: &'a str,
+    pub verbose: bool,
+    pub anonymize: bool,
+    pub domain_filter: Option<&'a str>,
+    pub relation_filter: Option<&'a str>,
+}
+
 pub fn run(file: &Path, format: &str, verbose: bool) -> Result<(), Box<dyn Error>> {
+    run_with_options(
+        file,
+        &InspectOptions {
+            format,
+            verbose,
+            anonymize: false,
+            domain_filter: None,
+            relation_filter: None,
+        },
+    )
+}
+
+pub fn run_with_options(file: &Path, opts: &InspectOptions<'_>) -> Result<(), Box<dyn Error>> {
     let reader = SnapshotReader::open(file)?;
     let metadata = fs::metadata(file)?;
     let header = reader.header();
 
-    if format == "json" {
+    let domain_matches = |d_idx: usize, d: &impulse_graph::DomainInfo, anon_name: &str| -> bool {
+        if let Some(f) = opts.domain_filter {
+            d.name.eq_ignore_ascii_case(f)
+                || d.domain_id.to_string() == f
+                || anon_name.eq_ignore_ascii_case(f)
+                || format!("Domain_{}", d_idx + 1).eq_ignore_ascii_case(f)
+        } else {
+            true
+        }
+    };
+
+    let relation_matches =
+        |r_idx: usize, r: &impulse_graph::RelationInfo, anon_name: &str| -> bool {
+            if let Some(rf) = opts.relation_filter {
+                if !r.name.eq_ignore_ascii_case(rf)
+                    && r.relation_id.to_string() != rf
+                    && !anon_name.eq_ignore_ascii_case(rf)
+                    && !format!("Relation_{}", r_idx + 1).eq_ignore_ascii_case(rf)
+                {
+                    return false;
+                }
+            }
+            if let Some(df) = opts.domain_filter {
+                let matches_src_tgt = reader.domains().iter().enumerate().any(|(d_idx, d)| {
+                    (d.domain_id == r.src_domain_id || d.domain_id == r.tgt_domain_id)
+                        && (d.name.eq_ignore_ascii_case(df)
+                            || d.domain_id.to_string() == df
+                            || format!("Domain_{}", d_idx + 1).eq_ignore_ascii_case(df))
+                });
+                if !matches_src_tgt {
+                    return false;
+                }
+            }
+            true
+        };
+
+    if opts.format == "json" {
         let mut domains = Vec::new();
-        for d in reader.domains() {
+        for (d_idx, d) in reader.domains().iter().enumerate() {
+            let d_name = if opts.anonymize {
+                format!("Domain_{}", d_idx + 1)
+            } else {
+                d.name.clone()
+            };
+            if !domain_matches(d_idx, d, &d_name) {
+                continue;
+            }
             domains.push(json!({
                 "domain_id": d.domain_id,
-                "name": d.name,
+                "name": d_name,
                 "key_type": format!("{:?}", d.key_type),
                 "node_count": d.node_count,
             }));
         }
 
         let mut relations = Vec::new();
-        for r in reader.relations() {
+        for (r_idx, r) in reader.relations().iter().enumerate() {
+            let r_name = if opts.anonymize {
+                format!("Relation_{}", r_idx + 1)
+            } else if r.name.is_empty() {
+                format!("rel_{}_{}", r.src_domain_id, r.tgt_domain_id)
+            } else {
+                r.name.clone()
+            };
+            if !relation_matches(r_idx, r, &r_name) {
+                continue;
+            }
             let mut attrs = Vec::new();
-            for a in &r.attributes {
+            for (a_idx, a) in r.attributes.iter().enumerate() {
+                let a_name = if opts.anonymize {
+                    format!("Attrib_{}", a_idx + 1)
+                } else {
+                    a.name.clone()
+                };
                 attrs.push(json!({
-                    "name": a.name,
+                    "name": a_name,
                     "type_code": a.type_code,
                     "dimension": a.dimension,
                     "data_offset": a.data_offset,
@@ -43,7 +124,7 @@ pub fn run(file: &Path, format: &str, verbose: bool) -> Result<(), Box<dyn Error
                 "src_domain_id": r.src_domain_id,
                 "tgt_domain_id": r.tgt_domain_id,
                 "encoding_id": r.encoding_id,
-                "name": r.name,
+                "name": r_name,
                 "node_count": r.node_count,
                 "edge_count": r.edge_count,
                 "csr_row_off_offset": r.csr_row_off_offset,
@@ -56,6 +137,30 @@ pub fn run(file: &Path, format: &str, verbose: bool) -> Result<(), Box<dyn Error
 
         let mut indices = Vec::new();
         for idx in reader.index_entries() {
+            if let Some(df) = opts.domain_filter {
+                let matches_dom = reader.domains().iter().enumerate().any(|(d_idx, d)| {
+                    d.domain_id == idx.domain_id
+                        && (d.name.eq_ignore_ascii_case(df)
+                            || d.domain_id.to_string() == df
+                            || format!("Domain_{}", d_idx + 1).eq_ignore_ascii_case(df))
+                });
+                if !matches_dom {
+                    continue;
+                }
+            }
+            if let Some(rf) = opts.relation_filter {
+                if idx.relation_id != 0xFFFF {
+                    let matches_rel = reader.relations().iter().enumerate().any(|(r_idx, r)| {
+                        r.relation_id == idx.relation_id
+                            && (r.name.eq_ignore_ascii_case(rf)
+                                || r.relation_id.to_string() == rf
+                                || format!("Relation_{}", r_idx + 1).eq_ignore_ascii_case(rf))
+                    });
+                    if !matches_rel {
+                        continue;
+                    }
+                }
+            }
             let vamana_json = if idx.index_type == IMP_INDEX_VAMANA_ANN {
                 reader.parse_vamana_header(idx).ok().map(|vh| {
                     let magic = vh.magic;
@@ -158,10 +263,18 @@ pub fn run(file: &Path, format: &str, verbose: bool) -> Result<(), Box<dyn Error
     // Domain Table
     let mut dom_table = Table::new();
     dom_table.set_header(vec!["ID", "Domain Name", "Key Type", "Node Count"]);
-    for d in reader.domains() {
+    for (d_idx, d) in reader.domains().iter().enumerate() {
+        let d_name = if opts.anonymize {
+            format!("Domain_{}", d_idx + 1)
+        } else {
+            d.name.clone()
+        };
+        if !domain_matches(d_idx, d, &d_name) {
+            continue;
+        }
         dom_table.add_row(vec![
             d.domain_id.to_string(),
-            d.name.clone(),
+            d_name,
             format!("{:?}", d.key_type),
             d.node_count.to_string(),
         ]);
@@ -183,7 +296,17 @@ pub fn run(file: &Path, format: &str, verbose: bool) -> Result<(), Box<dyn Error
         "Attributes",
         "Avg Degree",
     ]);
-    for r in reader.relations() {
+    for (r_idx, r) in reader.relations().iter().enumerate() {
+        let r_name = if opts.anonymize {
+            format!("Relation_{}", r_idx + 1)
+        } else if r.name.is_empty() {
+            format!("rel_{}_{}", r.src_domain_id, r.tgt_domain_id)
+        } else {
+            r.name.clone()
+        };
+        if !relation_matches(r_idx, r, &r_name) {
+            continue;
+        }
         let avg_deg = if r.node_count > 0 {
             r.edge_count as f64 / r.node_count as f64
         } else {
@@ -191,11 +314,7 @@ pub fn run(file: &Path, format: &str, verbose: bool) -> Result<(), Box<dyn Error
         };
         rel_table.add_row(vec![
             r.relation_id.to_string(),
-            if r.name.is_empty() {
-                format!("rel_{}_{}", r.src_domain_id, r.tgt_domain_id)
-            } else {
-                r.name.clone()
-            },
+            r_name,
             r.src_domain_id.to_string(),
             r.tgt_domain_id.to_string(),
             format!("0x{:02X}", r.encoding_id),
@@ -223,6 +342,30 @@ pub fn run(file: &Path, format: &str, verbose: bool) -> Result<(), Box<dyn Error
             "Data Bytes",
         ]);
         for idx in reader.index_entries() {
+            if let Some(df) = opts.domain_filter {
+                let matches_dom = reader.domains().iter().enumerate().any(|(d_idx, d)| {
+                    d.domain_id == idx.domain_id
+                        && (d.name.eq_ignore_ascii_case(df)
+                            || d.domain_id.to_string() == df
+                            || format!("Domain_{}", d_idx + 1).eq_ignore_ascii_case(df))
+                });
+                if !matches_dom {
+                    continue;
+                }
+            }
+            if let Some(rf) = opts.relation_filter {
+                if idx.relation_id != 0xFFFF {
+                    let matches_rel = reader.relations().iter().enumerate().any(|(r_idx, r)| {
+                        r.relation_id == idx.relation_id
+                            && (r.name.eq_ignore_ascii_case(rf)
+                                || r.relation_id.to_string() == rf
+                                || format!("Relation_{}", r_idx + 1).eq_ignore_ascii_case(rf))
+                    });
+                    if !matches_rel {
+                        continue;
+                    }
+                }
+            }
             let rel_str = if idx.relation_id == 0xFFFF {
                 format!("NODE (Dom #{})", idx.domain_id)
             } else {
@@ -255,6 +398,20 @@ pub fn run(file: &Path, format: &str, verbose: bool) -> Result<(), Box<dyn Error
             .index_entries()
             .iter()
             .filter(|e| e.index_type == IMP_INDEX_VAMANA_ANN)
+            .filter(|idx| {
+                if let Some(df) = opts.domain_filter {
+                    let matches_dom = reader.domains().iter().enumerate().any(|(d_idx, d)| {
+                        d.domain_id == idx.domain_id
+                            && (d.name.eq_ignore_ascii_case(df)
+                                || d.domain_id.to_string() == df
+                                || format!("Domain_{}", d_idx + 1).eq_ignore_ascii_case(df))
+                    });
+                    if !matches_dom {
+                        return false;
+                    }
+                }
+                true
+            })
             .collect();
         if !vamana_entries.is_empty() {
             println!();
@@ -304,15 +461,28 @@ pub fn run(file: &Path, format: &str, verbose: bool) -> Result<(), Box<dyn Error
         }
     }
 
-    if verbose {
+    if opts.verbose {
         println!();
         println!("--- VERBOSE SECTION OFFSETS & ATTRIBUTE DESCRIPTORS ---");
-        for r in reader.relations() {
+        for (r_idx, r) in reader.relations().iter().enumerate() {
+            let r_name = if opts.anonymize {
+                format!("Relation_{}", r_idx + 1)
+            } else {
+                r.name.clone()
+            };
+            if !relation_matches(r_idx, r, &r_name) {
+                continue;
+            }
             println!(
                 "  Relation #{}: Name='{}' | CSR Row Offsets Offset=0x{:X} ({} B), Column Indices Offset=0x{:X} ({} B)",
-                r.relation_id, r.name, r.csr_row_off_offset, r.csr_row_off_bytes, r.csr_col_idx_offset, r.csr_col_idx_bytes
+                r.relation_id, r_name, r.csr_row_off_offset, r.csr_row_off_bytes, r.csr_col_idx_offset, r.csr_col_idx_bytes
             );
-            for a in &r.attributes {
+            for (a_idx, a) in r.attributes.iter().enumerate() {
+                let a_name = if opts.anonymize {
+                    format!("Attrib_{}", a_idx + 1)
+                } else {
+                    a.name.clone()
+                };
                 let nullability = if (a.type_code & 0x80) != 0 {
                     "[Nullable]"
                 } else {
@@ -321,7 +491,7 @@ pub fn run(file: &Path, format: &str, verbose: bool) -> Result<(), Box<dyn Error
                 let base_type = a.type_code & 0x7F;
                 println!(
                     "    Attribute '{}': type_code=0x{:02X} {}, base_type=0x{:02X}, dim={}, data_offset=0x{:X} ({} B)",
-                    a.name, a.type_code, nullability, base_type, a.dimension, a.data_offset, a.data_bytes
+                    a_name, a.type_code, nullability, base_type, a.dimension, a.data_offset, a.data_bytes
                 );
             }
         }

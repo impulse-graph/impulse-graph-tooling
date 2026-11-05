@@ -55,8 +55,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             file,
             format,
             verbose,
+            anonymize,
+            domain,
+            relation,
         } => {
-            commands::inspect::run(&file, &format, verbose)?;
+            commands::inspect::run_with_options(
+                &file,
+                &commands::inspect::InspectOptions {
+                    format: &format,
+                    verbose,
+                    anonymize,
+                    domain_filter: domain.as_deref(),
+                    relation_filter: relation.as_deref(),
+                },
+            )?;
         }
         Commands::Assemble { input, output } => {
             commands::assemble::run(&input, &output)?;
@@ -146,8 +158,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 file,
                 format,
                 verbose,
+                anonymize,
+                domain,
+                relation,
             } => {
-                commands::inspect::run(&file, &format, verbose)?;
+                commands::inspect::run_with_options(
+                    &file,
+                    &commands::inspect::InspectOptions {
+                        format: &format,
+                        verbose,
+                        anonymize,
+                        domain_filter: domain.as_deref(),
+                        relation_filter: relation.as_deref(),
+                    },
+                )?;
             }
             SnapshotCommands::Validate {
                 file,

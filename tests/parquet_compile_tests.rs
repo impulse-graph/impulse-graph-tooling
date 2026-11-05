@@ -86,11 +86,23 @@ fn test_parquet_compile_nodes_edges_attributes() {
     // 5. Inspect and validate compiled snapshot
     let reader = impulse_graph::SnapshotReader::open(&output_snapshot).unwrap();
     assert_eq!(reader.header().domain_count(), 1);
-    assert_eq!(reader.relation_count(), 1);
+    assert_eq!(reader.relation_count(), 2);
 
-    let rel_meta = &reader.relations()[0];
+    let rel_meta = reader
+        .relations()
+        .iter()
+        .find(|r| r.name == "follows")
+        .expect("relation follows should exist");
     assert_eq!(rel_meta.edge_count, 3);
-    assert_eq!(rel_meta.attributes.len(), 2);
+    assert_eq!(rel_meta.attributes.len(), 1);
+
+    let node_rel_meta = reader
+        .relations()
+        .iter()
+        .find(|r| r.name == "User_nodes")
+        .expect("relation User_nodes should exist");
+    assert_eq!(node_rel_meta.edge_count, 0);
+    assert_eq!(node_rel_meta.attributes.len(), 1);
 
     let age_data = reader
         .get_domain_attribute_data(0, "age")
