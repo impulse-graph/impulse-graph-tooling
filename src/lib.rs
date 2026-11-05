@@ -115,6 +115,18 @@ pub enum Commands {
         /// Verbose detail dumping
         #[arg(short, long)]
         verbose: bool,
+
+        /// Anonymize domain, relation, and attribute names (Domain_1.., Relation_1.., Attrib_1..)
+        #[arg(long)]
+        anonymize: bool,
+
+        /// Optional domain filter (name or domain ID)
+        #[arg(long)]
+        domain: Option<String>,
+
+        /// Optional relation filter (name or relation ID)
+        #[arg(long)]
+        relation: Option<String>,
     },
 
     /// Assemble textual assembly (.impas) into binary bytecode program (.impb)
@@ -306,6 +318,18 @@ pub enum SnapshotCommands {
         /// Verbose detail dumping
         #[arg(short, long)]
         verbose: bool,
+
+        /// Anonymize domain, relation, and attribute names (Domain_1.., Relation_1.., Attrib_1..)
+        #[arg(long)]
+        anonymize: bool,
+
+        /// Optional domain filter (name or domain ID)
+        #[arg(long)]
+        domain: Option<String>,
+
+        /// Optional relation filter (name or relation ID)
+        #[arg(long)]
+        relation: Option<String>,
     },
 
     /// Validate binary snapshot file against Spec v0.9.0 normative requirements

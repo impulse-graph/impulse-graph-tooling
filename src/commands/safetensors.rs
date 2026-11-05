@@ -98,22 +98,22 @@ pub fn run_with_options(
                         f32_bytes.extend_from_slice(raw_data);
                     }
                     Dtype::F16 => {
-                        for chunk in raw_data.chunks_exact(2) {
-                            let h = u16::from_le_bytes(chunk.try_into().unwrap());
+                        for &chunk in raw_data.as_chunks::<2>().0 {
+                            let h = u16::from_le_bytes(chunk);
                             let f = f32_from_fp16(h);
                             f32_bytes.extend_from_slice(&f.to_le_bytes());
                         }
                     }
                     Dtype::BF16 => {
-                        for chunk in raw_data.chunks_exact(2) {
-                            let b16 = u16::from_le_bytes(chunk.try_into().unwrap()) as u32;
+                        for &chunk in raw_data.as_chunks::<2>().0 {
+                            let b16 = u16::from_le_bytes(chunk) as u32;
                             let f = f32::from_bits(b16 << 16);
                             f32_bytes.extend_from_slice(&f.to_le_bytes());
                         }
                     }
                     Dtype::F64 => {
-                        for chunk in raw_data.chunks_exact(8) {
-                            let f = f64::from_le_bytes(chunk.try_into().unwrap()) as f32;
+                        for &chunk in raw_data.as_chunks::<8>().0 {
+                            let f = f64::from_le_bytes(chunk) as f32;
                             f32_bytes.extend_from_slice(&f.to_le_bytes());
                         }
                     }

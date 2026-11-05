@@ -260,11 +260,7 @@ pub fn run(cfg: &BenchVectorConfig) -> Result<Vec<BenchRowResult>, Box<dyn Error
     let (row_offsets, col_indices, vectors, n_nodes, dim, query_vecs) =
         if let Some(ref snap_path) = cfg.snapshot {
             let reader = SnapshotReader::open(snap_path)?;
-            let dom_id = reader
-                .domains()
-                .first()
-                .map(|d| d.domain_id)
-                .unwrap_or(0);
+            let dom_id = reader.domains().first().map(|d| d.domain_id).unwrap_or(0);
             let (n, d, vecs) = reader.get_domain_float32_vectors(dom_id, None, None)?;
             let (ro, ci) = if !reader.relations().is_empty() {
                 (
@@ -414,10 +410,7 @@ pub fn run(cfg: &BenchVectorConfig) -> Result<Vec<BenchRowResult>, Box<dyn Error
             let quant_slab = reader.get_vamana_quant_slab(&hdr)?;
 
             for (opt_label, (old_to_new, new_to_old)) in [
-                (
-                    "opt:vamana-bfs",
-                    compute_vamana_bfs_order(&hdr, adj_slab),
-                ),
+                ("opt:vamana-bfs", compute_vamana_bfs_order(&hdr, adj_slab)),
                 (
                     "opt:rcm",
                     if !col_indices.is_empty() {

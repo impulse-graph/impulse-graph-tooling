@@ -204,7 +204,11 @@ impl VectorIndexSpec {
 
 /// Parses an inline vector string such as `"[0.1, -0.2, 0.3]"`, `"0.1;0.2;0.3"`, or `"0.1 0.2 0.3"`.
 pub fn parse_inline_vector_str(s: &str) -> Result<Vec<f32>, String> {
-    let trimmed = s.trim().trim_start_matches('[').trim_end_matches(']').trim();
+    let trimmed = s
+        .trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .trim();
     if trimmed.is_empty() {
         return Ok(Vec::new());
     }
@@ -283,7 +287,11 @@ pub fn load_npy(path: &Path) -> Result<LoadedEmbeddings, Box<dyn Error>> {
     f.read_to_end(&mut buf)?;
 
     if buf.len() < 10 || &buf[0..6] != b"\x93NUMPY" {
-        return Err(format!("File {} does not have a valid .npy magic header", path.display()).into());
+        return Err(format!(
+            "File {} does not have a valid .npy magic header",
+            path.display()
+        )
+        .into());
     }
     let major = buf[6];
     let (hdr_len, data_start) = if major == 1 {
@@ -305,7 +313,9 @@ pub fn load_npy(path: &Path) -> Result<LoadedEmbeddings, Box<dyn Error>> {
     let hdr_str = std::str::from_utf8(&buf[data_start - hdr_len..data_start])?;
 
     if hdr_str.contains("'fortran_order': True") || hdr_str.contains("\"fortran_order\": True") {
-        return Err("Fortran-ordered .npy arrays are not supported; save in C-contiguous order".into());
+        return Err(
+            "Fortran-ordered .npy arrays are not supported; save in C-contiguous order".into(),
+        );
     }
 
     // Extract descr
@@ -315,11 +325,16 @@ pub fn load_npy(path: &Path) -> Result<LoadedEmbeddings, Box<dyn Error>> {
         .to_string();
 
     // Extract shape tuple
-    let shape_pos = hdr_str.find("'shape'").or_else(|| hdr_str.find("\"shape\""))
+    let shape_pos = hdr_str
+        .find("'shape'")
+        .or_else(|| hdr_str.find("\"shape\""))
         .ok_or("Missing 'shape' in .npy header")?;
     let after_shape = &hdr_str[shape_pos..];
     let lparen = after_shape.find('(').ok_or("Missing '(' in .npy shape")?;
-    let rparen = after_shape[lparen..].find(')').ok_or("Missing ')' in .npy shape")? + lparen;
+    let rparen = after_shape[lparen..]
+        .find(')')
+        .ok_or("Missing ')' in .npy shape")?
+        + lparen;
     let dims: Vec<usize> = after_shape[lparen + 1..rparen]
         .split(',')
         .map(|s| s.trim())
@@ -342,16 +357,16 @@ pub fn load_npy(path: &Path) -> Result<LoadedEmbeddings, Box<dyn Error>> {
             if payload.len() < total_elems * 4 {
                 return Err("Truncated .npy <f4 payload".into());
             }
-            for chunk in payload[..total_elems * 4].chunks_exact(4) {
-                vectors.push(f32::from_le_bytes(chunk.try_into().unwrap()));
+            for &chunk in payload[..total_elems * 4].as_chunks::<4>().0 {
+                vectors.push(f32::from_le_bytes(chunk));
             }
         }
         "<f2" | "|f2" | "f2" => {
             if payload.len() < total_elems * 2 {
                 return Err("Truncated .npy <f2 payload".into());
             }
-            for chunk in payload[..total_elems * 2].chunks_exact(2) {
-                let h = u16::from_le_bytes(chunk.try_into().unwrap());
+            for &chunk in payload[..total_elems * 2].as_chunks::<2>().0 {
+                let h = u16::from_le_bytes(chunk);
                 vectors.push(f32_from_fp16(h));
             }
         }
@@ -359,8 +374,8 @@ pub fn load_npy(path: &Path) -> Result<LoadedEmbeddings, Box<dyn Error>> {
             if payload.len() < total_elems * 8 {
                 return Err("Truncated .npy <f8 payload".into());
             }
-            for chunk in payload[..total_elems * 8].chunks_exact(8) {
-                vectors.push(f64::from_le_bytes(chunk.try_into().unwrap()) as f32);
+            for &chunk in payload[..total_elems * 8].as_chunks::<8>().0 {
+                vectors.push(f64::from_le_bytes(chunk) as f32);
             }
         }
         other => return Err(format!("Unsupported .npy dtype '{}'", other).into()),
@@ -457,8 +472,8 @@ pub fn load_fvecs(path: &Path) -> Result<LoadedEmbeddings, Box<dyn Error>> {
             )
             .into());
         }
-        for chunk in rec[4..].chunks_exact(4) {
-            vectors.push(f32::from_le_bytes(chunk.try_into().unwrap()));
+        for &chunk in rec[4..].as_chunks::<4>().0 {
+            vectors.push(f32::from_le_bytes(chunk));
         }
     }
     Ok(LoadedEmbeddings {
@@ -534,8 +549,8 @@ pub fn load_ivecs(path: &Path) -> Result<LoadedEmbeddings, Box<dyn Error>> {
     let mut vectors = Vec::with_capacity(num_vectors * dim);
     for u in 0..num_vectors {
         let rec = &buf[u * stride..(u + 1) * stride];
-        for chunk in rec[4..].chunks_exact(4) {
-            vectors.push(i32::from_le_bytes(chunk.try_into().unwrap()) as f32);
+        for &chunk in rec[4..].as_chunks::<4>().0 {
+            vectors.push(i32::from_le_bytes(chunk) as f32);
         }
     }
     Ok(LoadedEmbeddings {
@@ -585,25 +600,25 @@ pub fn load_safetensors(
 
     match view.dtype() {
         Dtype::F32 => {
-            for chunk in data.chunks_exact(4) {
-                vectors.push(f32::from_le_bytes(chunk.try_into().unwrap()));
+            for &chunk in data.as_chunks::<4>().0 {
+                vectors.push(f32::from_le_bytes(chunk));
             }
         }
         Dtype::F16 => {
-            for chunk in data.chunks_exact(2) {
-                let h = u16::from_le_bytes(chunk.try_into().unwrap());
+            for &chunk in data.as_chunks::<2>().0 {
+                let h = u16::from_le_bytes(chunk);
                 vectors.push(f32_from_fp16(h));
             }
         }
         Dtype::BF16 => {
-            for chunk in data.chunks_exact(2) {
-                let b16 = u16::from_le_bytes(chunk.try_into().unwrap()) as u32;
+            for &chunk in data.as_chunks::<2>().0 {
+                let b16 = u16::from_le_bytes(chunk) as u32;
                 vectors.push(f32::from_bits(b16 << 16));
             }
         }
         Dtype::F64 => {
-            for chunk in data.chunks_exact(8) {
-                vectors.push(f64::from_le_bytes(chunk.try_into().unwrap()) as f32);
+            for &chunk in data.as_chunks::<8>().0 {
+                vectors.push(f64::from_le_bytes(chunk) as f32);
             }
         }
         other => {
@@ -772,7 +787,11 @@ pub fn load_jsonl_embeddings(
         let arr = if let Some(a) = val.as_array() {
             a
         } else if let Some(obj) = val.as_object() {
-            if let Some(id_val) = obj.get("id").or_else(|| obj.get("key")).or_else(|| obj.get("node_id")) {
+            if let Some(id_val) = obj
+                .get("id")
+                .or_else(|| obj.get("key"))
+                .or_else(|| obj.get("node_id"))
+            {
                 has_keys = true;
                 keys.push(match id_val {
                     serde_json::Value::String(s) => s.clone(),

@@ -1,9 +1,10 @@
-use crate::embeddings::{
-    load_embeddings_from_path, EmbeddingAttachmentSpec, VectorIndexSpec,
+use crate::embeddings::{load_embeddings_from_path, EmbeddingAttachmentSpec, VectorIndexSpec};
+use impulse_graph::spec::{
+    BaseDataType, IMPULSE_TYPE_MASK, IMP_INDEX_MINIMAL_PERFECT_HASH, IMP_INDEX_VAMANA_ANN,
 };
-use impulse_graph::spec::{BaseDataType, IMPULSE_TYPE_MASK, IMP_INDEX_MINIMAL_PERFECT_HASH, IMP_INDEX_VAMANA_ANN};
 use impulse_graph::vamana::{
-     compute_vamana_bfs_order, permute_vamana_index, VamanaBuildConfig, VamanaMetric, VamanaQuantType,
+    compute_vamana_bfs_order, permute_vamana_index, VamanaBuildConfig, VamanaMetric,
+    VamanaQuantType,
 };
 use impulse_graph::{SnapshotReader, SnapshotWriter};
 use std::collections::{HashMap, VecDeque};
@@ -303,9 +304,8 @@ pub fn run_with_options(
                         if table_start + key_count * 8 <= idx_blob.len() {
                             for slot in 0..key_count {
                                 let off = table_start + slot * 8;
-                                let k_off = u32::from_le_bytes(
-                                    idx_blob[off..off + 4].try_into().unwrap(),
-                                );
+                                let k_off =
+                                    u32::from_le_bytes(idx_blob[off..off + 4].try_into().unwrap());
                                 if k_off != 0 {
                                     let old_nid = u32::from_le_bytes(
                                         idx_blob[off + 4..off + 8].try_into().unwrap(),
@@ -333,7 +333,8 @@ pub fn run_with_options(
             let hdr = reader.parse_vamana_header(entry)?;
             if opts.rebuild_vector_index {
                 let metric = VamanaMetric::from_u8(hdr.metric).unwrap_or(VamanaMetric::Cosine);
-                let quant = VamanaQuantType::from_u8(hdr.quant_type).unwrap_or(VamanaQuantType::Sq8);
+                let quant =
+                    VamanaQuantType::from_u8(hdr.quant_type).unwrap_or(VamanaQuantType::Sq8);
                 let cfg = VamanaBuildConfig {
                     max_degree_r: hdr.max_degree_r,
                     ef_construction: hdr.ef_construction,
@@ -355,13 +356,8 @@ pub fn run_with_options(
                 let adj_slab = reader.get_vamana_adj_slab(&hdr)?;
                 let quant_slab = reader.get_vamana_quant_slab(&hdr)?;
                 if let Some((old_to_new, new_to_old)) = domain_perms.get(&hdr.domain_id) {
-                    let permuted = permute_vamana_index(
-                        &hdr,
-                        adj_slab,
-                        quant_slab,
-                        old_to_new,
-                        new_to_old,
-                    )?;
+                    let permuted =
+                        permute_vamana_index(&hdr, adj_slab, quant_slab, old_to_new, new_to_old)?;
                     writer.add_built_vamana_index(&entry.name, permuted);
                 }
             }
@@ -394,7 +390,12 @@ pub fn run_with_options(
                     vspec.domain_name
                 )
             })?;
-        writer.add_vamana_index(dom.domain_id, &vspec.attr_name, &vspec.index_name, &vspec.config)?;
+        writer.add_vamana_index(
+            dom.domain_id,
+            &vspec.attr_name,
+            &vspec.index_name,
+            &vspec.config,
+        )?;
     }
 
     writer.finalize()?;
@@ -432,7 +433,11 @@ fn permute_attribute_payload(
     let (bitmap_bytes_padded, payload_slice) = if is_nullable {
         let word_count = count.div_ceil(64);
         let raw_bm = word_count * 8;
-        let padded_bm = if raw_bm == 0 { 0 } else { (raw_bm + 127) & !127 };
+        let padded_bm = if raw_bm == 0 {
+            0
+        } else {
+            (raw_bm + 127) & !127
+        };
         if padded_bm <= raw_data.len() {
             (padded_bm, &raw_data[padded_bm..])
         } else {
@@ -463,24 +468,25 @@ fn permute_attribute_payload(
         Vec::new()
     };
 
-    if (base_type == 0x0B || base_type == 0x0C) && raw_offsets.is_some() {
-        let offs = raw_offsets.unwrap();
-        let mut new_offs = Vec::with_capacity(count + 1);
-        let mut new_blob = Vec::with_capacity(payload_slice.len());
-        new_offs.push(0u32);
-        for &old_u in new_to_old {
-            let u = old_u as usize;
-            if u + 1 < offs.len() {
-                let s = offs[u] as usize;
-                let e = (offs[u + 1] as usize).min(payload_slice.len());
-                if s <= e {
-                    new_blob.extend_from_slice(&payload_slice[s..e]);
+    if base_type == 0x0B || base_type == 0x0C {
+        if let Some(offs) = raw_offsets {
+            let mut new_offs = Vec::with_capacity(count + 1);
+            let mut new_blob = Vec::with_capacity(payload_slice.len());
+            new_offs.push(0u32);
+            for &old_u in new_to_old {
+                let u = old_u as usize;
+                if u + 1 < offs.len() {
+                    let s = offs[u] as usize;
+                    let e = (offs[u + 1] as usize).min(payload_slice.len());
+                    if s <= e {
+                        new_blob.extend_from_slice(&payload_slice[s..e]);
+                    }
                 }
+                new_offs.push(new_blob.len() as u32);
             }
-            new_offs.push(new_blob.len() as u32);
+            new_bitmap_buf.extend_from_slice(&new_blob);
+            return (new_bitmap_buf, Some(new_offs));
         }
-        new_bitmap_buf.extend_from_slice(&new_blob);
-        return (new_bitmap_buf, Some(new_offs));
     }
 
     let stride = attribute_element_byte_stride(type_code, dimension);

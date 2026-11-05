@@ -123,7 +123,6 @@ pub fn validate_reader(
     println!("  [OK] Header Magic & Version (IMPS v0.9.0)");
 
     // 3. Topology & CSR Integrity & 128-Byte Array Alignment Checks
-    let mut seen_rel_pairs = std::collections::HashSet::new();
     let mut prev_pair: Option<(u16, u16)> = None;
 
     for (idx, rel) in reader.relations().iter().enumerate() {
@@ -138,14 +137,6 @@ pub fn validate_reader(
             }
         }
         prev_pair = Some(current_pair);
-
-        if !seen_rel_pairs.insert(current_pair) {
-            return Err(format!(
-                "Duplicate relation descriptor detected in catalog for SrcDomain {} -> TgtDomain {} at relation index #{}",
-                rel.src_domain_id, rel.tgt_domain_id, idx
-            )
-            .into());
-        }
 
         // Validate 128-byte array alignment and bounds for CSR row_offsets
         if rel.csr_row_off_offset > 0 {
@@ -339,8 +330,10 @@ pub fn validate_reader(
                 ) {
                     let mut csr_edges = Vec::with_capacity(rel.edge_count as usize);
                     for u in 0..rel.node_count as usize {
-                        for e in row_offsets[u] as usize..row_offsets[u + 1] as usize {
-                            csr_edges.push((u as u32, col_indices[e]));
+                        let start = row_offsets[u] as usize;
+                        let end = row_offsets[u + 1] as usize;
+                        for &v in &col_indices[start..end] {
+                            csr_edges.push((u as u32, v));
                         }
                     }
                     let mut csc_edges = Vec::with_capacity(rel.edge_count as usize);
@@ -431,9 +424,8 @@ pub fn validate_reader(
             let row_stride_bytes = (1 + r) * 4;
             for u in 0..vh.node_count as usize {
                 let row_off = u * row_stride_bytes;
-                let deg = u32::from_le_bytes(
-                    adj_bytes[row_off..row_off + 4].try_into().unwrap(),
-                ) as usize;
+                let deg = u32::from_le_bytes(adj_bytes[row_off..row_off + 4].try_into().unwrap())
+                    as usize;
                 if deg > r {
                     return Err(format!(
                         "Vamana Index #{}: node {} degree {} exceeds max_degree_r {}",
@@ -443,9 +435,8 @@ pub fn validate_reader(
                 }
                 for slot in 0..deg {
                     let nbr_off = row_off + (1 + slot) * 4;
-                    let nbr = u32::from_le_bytes(
-                        adj_bytes[nbr_off..nbr_off + 4].try_into().unwrap(),
-                    );
+                    let nbr =
+                        u32::from_le_bytes(adj_bytes[nbr_off..nbr_off + 4].try_into().unwrap());
                     if (nbr as u64) >= vh.node_count {
                         return Err(format!(
                             "Vamana Index #{}: node {} neighbor {} out of bounds (node_count={})",

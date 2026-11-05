@@ -52,8 +52,7 @@ struct RelationDef {
     format: Option<String>,
     src_column: Option<String>,
     tgt_column: Option<String>,
-    #[allow(dead_code)]
-    include_csc: Option<bool>,
+    pub include_csc: Option<bool>,
     attributes: Option<Vec<AttributeDef>>,
 }
 
@@ -744,7 +743,7 @@ pub fn run_with_options(
             let off = offsets[i];
             let nid = node_ids[i];
 
-            let mut h = seed;
+            let mut h = 14695981039346656037_u64 ^ seed;
             for &b in k.as_bytes() {
                 h ^= b as u64;
                 h = h.wrapping_mul(1099511628211);

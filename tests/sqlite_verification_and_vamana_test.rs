@@ -31,8 +31,7 @@ fn test_multi_format_embedding_loaders_roundtrip() {
     // 1. NumPy .npy
     let npy_path = dir.join("vecs.npy");
     write_npy(&npy_path, &expected, n, dim).expect("write_npy failed");
-    let loaded_npy =
-        load_embeddings_from_path(&npy_path, None, false).expect("load .npy failed");
+    let loaded_npy = load_embeddings_from_path(&npy_path, None, false).expect("load .npy failed");
     assert_eq!(loaded_npy.num_vectors, n);
     assert_eq!(loaded_npy.dimension, dim);
     for (a, b) in loaded_npy.vectors.iter().zip(expected.iter()) {
@@ -297,7 +296,14 @@ fn test_hexio_ten_point_corruption_matrix_rejected_by_validator() {
     let mut writer = SnapshotWriter::new("__unused_hexio_matrix.imps");
     writer.add_domain(0, KeyType::Int64, "Item");
     writer.set_domain_node_count(0, n as u64);
-    writer.add_relation(0, 0, n as u64, col_indices.len() as u64, row_offsets, col_indices);
+    writer.add_relation(
+        0,
+        0,
+        n as u64,
+        col_indices.len() as u64,
+        row_offsets,
+        col_indices,
+    );
     writer.set_relation_name(0, "LINK");
     writer.set_relation_include_csc(0, true);
     writer.add_attribute_to_domain(
@@ -451,7 +457,8 @@ OP_HALT
     let bytes = fs::read(&impb_path).unwrap();
     assert_eq!(bytes.len(), 17 * 8);
 
-    let disasm = commands::disassemble::disassemble_bytes(&bytes, None).expect("disassemble failed");
+    let disasm =
+        commands::disassemble::disassemble_bytes(&bytes, None).expect("disassemble failed");
     assert!(disasm.contains("OP_LOAD_INLINE_SET"));
     assert!(disasm.contains("OP_CSR_WALK_STATE"));
     assert!(disasm.contains("OP_COO_WALK_STREAM"));

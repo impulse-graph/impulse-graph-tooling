@@ -254,7 +254,7 @@ pub fn disassemble_bytes(
     buffer: &[u8],
     input_path: Option<&Path>,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    if buffer.len() % 8 != 0 {
+    if !buffer.len().is_multiple_of(8) {
         return Err("Binary bytecode file size must be a multiple of 8 bytes".into());
     }
 
