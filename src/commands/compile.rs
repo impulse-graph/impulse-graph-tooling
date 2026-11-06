@@ -631,6 +631,14 @@ pub fn run_with_options(
         if manifest.relations[rel_idx].include_csc.unwrap_or(false) {
             writer.set_relation_include_csc(rel_idx, true);
         }
+        if manifest.relations[rel_idx]
+            .encoding
+            .as_deref()
+            .map(|s| s.eq_ignore_ascii_case("coo"))
+            .unwrap_or(false)
+        {
+            writer.set_relation_encoding(rel_idx, 3);
+        }
 
         for attr in cr.attributes {
             writer.add_attribute_to_relation(
@@ -727,7 +735,9 @@ pub fn run_with_options(
         let mut keys = Vec::new();
         let mut node_ids = Vec::new();
 
-        for (k, v) in map {
+        let mut sorted_entries: Vec<(&String, &u32)> = map.iter().collect();
+        sorted_entries.sort_by_key(|(_, &nid)| nid);
+        for (k, v) in sorted_entries {
             keys.push(k.clone());
             node_ids.push(*v);
             offsets.push(string_pool.len() as u32);
