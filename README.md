@@ -1,4 +1,7 @@
-# Impulse Graph Tooling (`impulse-graph-tooling`)
+# [ARCHIVED] Impulse Graph Tooling (`impulse-graph-tooling`)
+
+> [!IMPORTANT]
+> **This repository is archived.** All CLI tooling (`impulse-graph` / `impulse`) has been consolidated into **[`impulse-graph-core/impulse-cli`](https://github.com/impulse-graph/impulse-graph-core/tree/main/impulse-cli)**. Please submit all future issues and pull requests to [`impulse-graph/impulse-graph-core`](https://github.com/impulse-graph/impulse-graph-core).
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
